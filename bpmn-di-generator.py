@@ -54,11 +54,83 @@ class BpmnXmlManager:
 
     return data
 
+  @staticmethod
+  def generate_di_layer_xml(di_layer_dict):
+    return json.dumps(di_layer_dict, indent=2)
+
 
 class BpmnLayoutGenerator:
-  @staticmethod
-  def generate_di_layer(tags_dict_repr):
-    return tags_dict_repr
+
+  def __init__(self):
+    self.repr = None
+
+  def generate_di_layer(self, tags_dict_repr):
+    self.repr = tags_dict_repr
+    self.add_structure_attrs()
+    self.calc_grid_structure()
+    self.calc_elem_sizes()
+    self.calc_grid_sizes()
+    self.calc_elem_coords()
+    self.calc_edges()
+
+  def _assign_branches(self, start_node, current_branch_id):
+    """рекурсивно обходим элементы и назначаем ветки"""
+    start_node["branch_id"] = current_branch_id
+
+    for child in start_node.get("children", []):
+      if child["tag"] == "outgoing":
+        target_node = next(
+          n for n in self.repr["children"]
+          if any(c.get("text") == child["text"] for c in n.get("children", []) if c["tag"] == "incoming")
+        )
+
+        if target_node["tag"] == "exclusiveGateway":
+          outgoing_from_gateway = [c for c in target_node.get("children", []) if c["tag"] == "outgoing"]
+          target_node["branch_id"] = current_branch_id
+
+          new_branch_ids = []
+          for idx, gw_outflow in enumerate(outgoing_from_gateway):
+            if idx > 0:
+              current_branch_id += 1
+              new_branch_ids.append(current_branch_id)
+            else:
+              new_branch_ids.append(current_branch_id)
+
+          for idx, gw_outflow in enumerate(outgoing_from_gateway):
+            target_next = next(
+              n for n in self.repr["children"]
+              if any(c.get("text") == gw_outflow["text"] for c in n.get("children", []) if c["tag"] == "incoming")
+            )
+            self._assign_branches(target_next, new_branch_ids[idx])
+        else:
+          self._assign_branches(target_node, current_branch_id)
+
+  def add_structure_attrs(self):
+    start_event = next(n for n in self.repr["children"] if n["tag"] == "startEvent")
+    self._assign_branches(start_event, 1)
+
+  def calc_grid_structure(self):
+    """считаем размерность сетки и адреса ячеек в ней.
+        Должен вызываться рекурсивно для поддержки субпроцессов.
+        Возможность наличия неограниченного количества субпроцессов
+        учесть в размерах сетки и в принципах индексации"""
+    pass
+
+  def calc_elem_sizes(self):
+    """считаем размер элементов"""
+    pass
+
+  def calc_grid_sizes(self):
+    """считаем размер ячеек"""
+    pass
+
+  def calc_elem_coords(self):
+    """размещаем элементы по сетке (считаем координаты)"""
+    pass
+
+  def calc_edges(self):
+    """считаем координаты стрелок"""
+    pass
 
 
 class BpmnDiEditorGui(Tk):
@@ -79,7 +151,7 @@ class BpmnDiEditorGui(Tk):
     Label(self, text='Output XML:').grid(row=3, column=0, sticky='W')
     self._add_text_field('xml_output_field', 3)
 
-    self.xml_input_field.insert(END, self.processor.input_xml)
+    self.xml_input_field.insert(END, self.processor.input_xml or '')
 
   def _add_text_field(self, field_name, row_number):
     setattr(self, field_name, Text(self, wrap='none'))
@@ -92,9 +164,10 @@ class BpmnDiEditorGui(Tk):
     try:
       self.processor.set_input_xml(input_xml)
       process_elems = self.processor.extract_process_dict_repr()
-      di_layer_dict = self.layout_generator.generate_di_layer(process_elems)
+      self.layout_generator.generate_di_layer(process_elems)
+      di_layer_xml = self.processor.generate_di_layer_xml(self.layout_generator.repr)
 
-      self.xml_output_field.insert(END, json.dumps(di_layer_dict, indent=2))  # debug !!
+      self.xml_output_field.insert(END, di_layer_xml)
 
     except ElementTree.ParseError:
       self.xml_output_field.insert(END, 'XML is not valid')

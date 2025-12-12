@@ -1,4 +1,5 @@
 *.log
+*.txt
 *.sqlite3
 */migrations/
 /.idea/
