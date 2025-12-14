@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
+from typing import Optional
 
 
 class BpmnXmlManager:
@@ -24,23 +25,25 @@ class BpmnXmlManager:
 
   @staticmethod
   def parse_element(element):
-    result = {
+    attrs = {
       'tag': element.tag.split('}')[-1],
       'text': '' if not element.text else element.text.strip()
     }
 
     if element.attrib:
-      result.update(element.attrib)
+      attrs.update(element.attrib)
 
     children = list(element)
-    if len(children) > 0:
-      child_elements = []
+    if len(children):
+      child_elements = {}
       for child in children:
-        child_elements.append(BpmnXmlManager.parse_element(child))
+        child_elements.update(BpmnXmlManager.parse_element(child))
+      attrs['children'] = child_elements
 
-      result['children'] = child_elements
-
-    return result
+    try:
+      return {attrs['id']: attrs}
+    except KeyError:
+      return {attrs['text']: attrs}
 
   def extract_process_dict_repr(self):
     root = ElementTree.fromstring(self.input_xml)
@@ -49,7 +52,7 @@ class BpmnXmlManager:
     if not processes:
       raise ValueError("BPMN XML is not valid: aint no <bpmn:process> tag")
 
-    first_process = processes[0]
+    first_process = processes[0]  # todo добавить поддержку схем с несколькими процессами
     data = BpmnXmlManager.parse_element(first_process)
 
     return data
@@ -62,10 +65,15 @@ class BpmnXmlManager:
 class BpmnLayoutGenerator:
 
   def __init__(self):
-    self.repr = None
+    self.brunch_counter: int = 1
+    self.repr: dict = {}
+    self.start_events_ids: list[str] = []
+    self.visited_nodes_ids: list[str] = []
+    self.nodes_to_visit_ids: list[str] = []
 
   def generate_di_layer(self, tags_dict_repr):
-    self.repr = tags_dict_repr
+    self.repr = list(tags_dict_repr.values())[0]['children']
+
     self.add_structure_attrs()
     self.calc_grid_structure()
     self.calc_elem_sizes()
@@ -73,41 +81,42 @@ class BpmnLayoutGenerator:
     self.calc_elem_coords()
     self.calc_edges()
 
-  def _assign_branches(self, start_node, current_branch_id):
-    """рекурсивно обходим элементы и назначаем ветки"""
-    start_node["branch_id"] = current_branch_id
+    self.brunch_counter = 1
 
-    for child in start_node.get("children", []):
-      if child["tag"] == "outgoing":
-        target_node = next(
-          n for n in self.repr["children"]
-          if any(c.get("text") == child["text"] for c in n.get("children", []) if c["tag"] == "incoming")
-        )
+  def _get_arrow_endpoint_node(self, arrow_id, side):
+    """mode: enum = 'source' | 'target' """
+    return self.repr[arrow_id][f'{side}Ref']
 
-        if target_node["tag"] == "exclusiveGateway":
-          outgoing_from_gateway = [c for c in target_node.get("children", []) if c["tag"] == "outgoing"]
-          target_node["branch_id"] = current_branch_id
+  def _handle_target_nodes(self, source_node_id):
+    """найти исходящие стрелки -> найти элементы по ним -> первму присвоить ветку и вернуть,
+        остальные пометить к посещению"""
+    outgoing_flows_ids = filter(lambda k, v: v['tag'] == 'outgoing', self.repr[source_node_id]['children'].items())
+    target_nodes_ids = list(map(lambda x: self._get_arrow_endpoint_node(x, 'source'), outgoing_flows_ids))
 
-          new_branch_ids = []
-          for idx, gw_outflow in enumerate(outgoing_from_gateway):
-            if idx > 0:
-              current_branch_id += 1
-              new_branch_ids.append(current_branch_id)
-            else:
-              new_branch_ids.append(current_branch_id)
+    self.nodes_to_visit_ids += target_nodes_ids[1:]
 
-          for idx, gw_outflow in enumerate(outgoing_from_gateway):
-            target_next = next(
-              n for n in self.repr["children"]
-              if any(c.get("text") == gw_outflow["text"] for c in n.get("children", []) if c["tag"] == "incoming")
-            )
-            self._assign_branches(target_next, new_branch_ids[idx])
-        else:
-          self._assign_branches(target_node, current_branch_id)
+    try:
+      self.repr[target_nodes_ids[0]]['brunch'] = self.brunch_counter
+      return target_nodes_ids[0]
+    except IndexError:
+      return None
+
+  def _traverse_and_assign_branch_numbers(self, initial_elem_id):
+    """todo протестить и дописать обработку новых веток, не начинающихся со startEvent
+        (обернуть в цикл последние три строки для каждого self.nodes_to_visit_id) """
+    self.repr[initial_elem_id]['brunch'] = self.brunch_counter
+    next_elem = self._handle_target_nodes(initial_elem_id)
+
+    while next_elem:
+      next_elem = self._handle_target_nodes(next_elem)
+
+    self.brunch_counter += 1
 
   def add_structure_attrs(self):
-    start_event = next(n for n in self.repr["children"] if n["tag"] == "startEvent")
-    self._assign_branches(start_event, 1)
+    self.start_events_ids += [v['id'] for k, v in self.repr.items() if v.get('tag') == 'startEvent']
+
+    for initial_elem_id in self.start_events_ids:
+      self._traverse_and_assign_branch_numbers(initial_elem_id)
 
   def calc_grid_structure(self):
     """считаем размерность сетки и адреса ячеек в ней.
