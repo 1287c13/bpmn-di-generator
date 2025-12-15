@@ -88,8 +88,9 @@ class BpmnLayoutGenerator:
     return self.repr[arrow_id][f'{side}Ref']
 
   def _handle_target_nodes(self, source_node_id):
-    """найти исходящие стрелки -> найти элементы по ним -> первму присвоить ветку и вернуть,
-        остальные пометить к посещению"""
+    """
+    Ищем следующие элементы. Первый возвращшаем, остальные помечаем к посещению.
+    """
     outgoing_flows_keyvalues = filter(
       lambda x: x[1]['tag'] == 'outgoing', self.repr[source_node_id]['children'].items())
     target_nodes_ids = list(map(
@@ -98,14 +99,16 @@ class BpmnLayoutGenerator:
     self.nodes_to_visit_ids += target_nodes_ids[1:]
 
     try:
-      self.repr[target_nodes_ids[0]]['brunch'] = self.brunch_counter
+      self.repr[target_nodes_ids[0]].setdefault('brunch', self.brunch_counter)
       return target_nodes_ids[0]
     except IndexError:
       return None
 
   def _traverse_and_assign_branch_numbers(self, initial_elem_id):
-    """todo протестить и дописать обработку новых веток, не начинающихся со startEvent
-        (обернуть в цикл последние три строки для каждого self.nodes_to_visit_id) """
+    """
+    Проходим всю ветку начального элемента и делаем рекурсивный вызов
+    для следующих обнаруженных элементов, которые нужно посетить.
+    """
     self.repr[initial_elem_id]['brunch'] = self.brunch_counter
     next_elem = self._handle_target_nodes(initial_elem_id)
 
@@ -114,7 +117,16 @@ class BpmnLayoutGenerator:
 
     self.brunch_counter += 1
 
+    next_brunch_first_elem = self.nodes_to_visit_ids.pop()
+    try:
+      self._traverse_and_assign_branch_numbers(next_brunch_first_elem)
+    except IndexError:
+      pass
+
   def add_structure_attrs(self):
+    """
+    Собираем все стартовые события и запускаем разметку ветвей схемы.
+    """
     self.start_events_ids += [
       v['id'] for k, v in self.repr.items() if v.get('tag') == 'startEvent']
 
