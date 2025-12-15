@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
-from typing import Optional
+from typing import List
 
 
 class BpmnXmlManager:
@@ -67,9 +67,9 @@ class BpmnLayoutGenerator:
   def __init__(self):
     self.brunch_counter: int = 1
     self.repr: dict = {}
-    self.start_events_ids: list[str] = []
-    self.visited_nodes_ids: list[str] = []
-    self.nodes_to_visit_ids: list[str] = []
+    self.start_events_ids: List[str] = []
+    self.visited_nodes_ids: List[str] = []
+    self.nodes_to_visit_ids: List[str] = []
 
   def generate_di_layer(self, tags_dict_repr):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -90,8 +90,10 @@ class BpmnLayoutGenerator:
   def _handle_target_nodes(self, source_node_id):
     """найти исходящие стрелки -> найти элементы по ним -> первму присвоить ветку и вернуть,
         остальные пометить к посещению"""
-    outgoing_flows_ids = filter(lambda k, v: v['tag'] == 'outgoing', self.repr[source_node_id]['children'].items())
-    target_nodes_ids = list(map(lambda x: self._get_arrow_endpoint_node(x, 'source'), outgoing_flows_ids))
+    outgoing_flows_keyvalues = filter(
+      lambda x: x[1]['tag'] == 'outgoing', self.repr[source_node_id]['children'].items())
+    target_nodes_ids = list(map(
+      lambda x: self._get_arrow_endpoint_node(x[0], 'target'), outgoing_flows_keyvalues))
 
     self.nodes_to_visit_ids += target_nodes_ids[1:]
 
@@ -113,7 +115,8 @@ class BpmnLayoutGenerator:
     self.brunch_counter += 1
 
   def add_structure_attrs(self):
-    self.start_events_ids += [v['id'] for k, v in self.repr.items() if v.get('tag') == 'startEvent']
+    self.start_events_ids += [
+      v['id'] for k, v in self.repr.items() if v.get('tag') == 'startEvent']
 
     for initial_elem_id in self.start_events_ids:
       self._traverse_and_assign_branch_numbers(initial_elem_id)
@@ -156,7 +159,8 @@ class BpmnDiEditorGui(Tk):
   def _create_ui(self):
     Label(self, text='Input XML:').grid(row=0, column=0, sticky='W')
     self._add_text_field('xml_input_field', 0)
-    Button(self, text='Convert', command=self.convert_xml).grid(row=2, column=0, columnspan=2)
+    Button(self, text='Convert',
+           command=self.convert_xml).grid(row=2, column=0, columnspan=2)
     Label(self, text='Output XML:').grid(row=3, column=0, sticky='W')
     self._add_text_field('xml_output_field', 3)
 
@@ -174,7 +178,8 @@ class BpmnDiEditorGui(Tk):
       self.processor.set_input_xml(input_xml)
       process_elems = self.processor.extract_process_dict_repr()
       self.layout_generator.generate_di_layer(process_elems)
-      di_layer_xml = self.processor.generate_di_layer_xml(self.layout_generator.repr)
+      di_layer_xml = self.processor.generate_di_layer_xml(
+        self.layout_generator.repr)
 
       self.xml_output_field.insert(END, di_layer_xml)
 
