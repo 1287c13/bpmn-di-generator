@@ -67,6 +67,7 @@ class BpmnLayoutGenerator:
   def __init__(self):
     self.brunch_counter: int = 1
     self.repr: dict = {}
+    self.subprocesses: list = []
     self.start_events_ids: List[str] = []
     self.visited_nodes_ids: List[str] = []
     self.nodes_to_visit_ids: List[str] = []
@@ -81,57 +82,70 @@ class BpmnLayoutGenerator:
     self.calc_elem_coords()
     self.calc_edges()
 
-    self.brunch_counter = 1
-
-  def _get_arrow_endpoint_node(self, arrow_id, side):
+  @staticmethod
+  def _get_arrow_endpoint_node(arrow_id, side, structure):
     """mode: enum = 'source' | 'target' """
-    return self.repr[arrow_id][f'{side}Ref']
+    return structure[arrow_id][f'{side}Ref']
 
-  def _handle_target_nodes(self, source_node_id):
+  def _handle_target_nodes(self, source_node_id, structure):
     """
     Ищем следующие элементы. Первый возвращшаем, остальные помечаем к посещению.
     """
     outgoing_flows_keyvalues = filter(
-      lambda x: x[1]['tag'] == 'outgoing', self.repr[source_node_id]['children'].items())
+      lambda x: x[1]['tag'] == 'outgoing', structure[source_node_id]['children'].items())
     target_nodes_ids = list(map(
-      lambda x: self._get_arrow_endpoint_node(x[0], 'target'), outgoing_flows_keyvalues))
+      lambda x: self._get_arrow_endpoint_node(x[0], 'target', structure), outgoing_flows_keyvalues))
 
     self.nodes_to_visit_ids += target_nodes_ids[1:]
 
     try:
-      self.repr[target_nodes_ids[0]].setdefault('brunch', self.brunch_counter)
+      structure[target_nodes_ids[0]].setdefault('brunch', self.brunch_counter)
       return target_nodes_ids[0]
     except IndexError:
       return None
 
-  def _traverse_and_assign_branch_numbers(self, initial_elem_id):
+  def _traverse_and_assign_branch_numbers(self, initial_elem_id, structure):
     """
     Проходим всю ветку начального элемента и делаем рекурсивный вызов
     для следующих обнаруженных элементов, которые нужно посетить.
     """
-    self.repr[initial_elem_id]['brunch'] = self.brunch_counter
-    next_elem = self._handle_target_nodes(initial_elem_id)
+    structure[initial_elem_id]['brunch'] = self.brunch_counter
+    next_elem_id = self._handle_target_nodes(initial_elem_id, structure)
 
-    while next_elem:
-      next_elem = self._handle_target_nodes(next_elem)
+    while next_elem_id:
+      if structure[next_elem_id]['tag'] == 'subProcess':
+        self.subprocesses.append(structure[next_elem_id]['children'])
+
+      next_elem_id = self._handle_target_nodes(next_elem_id, structure)
 
     self.brunch_counter += 1
 
     next_brunch_first_elem = self.nodes_to_visit_ids.pop()
     try:
-      self._traverse_and_assign_branch_numbers(next_brunch_first_elem)
+      self._traverse_and_assign_branch_numbers(next_brunch_first_elem, structure)
     except IndexError:
       pass
 
-  def add_structure_attrs(self):
+  def _handle_process(self, structure=None):
     """
     Собираем все стартовые события и запускаем разметку ветвей схемы.
     """
+    self.brunch_counter = 1
+    self.start_events_ids = []
+
+    if not structure:
+      structure = self.repr
+
     self.start_events_ids += [
-      v['id'] for k, v in self.repr.items() if v.get('tag') == 'startEvent']
+      v['id'] for k, v in structure.items() if v.get('tag') == 'startEvent']
 
     for initial_elem_id in self.start_events_ids:
-      self._traverse_and_assign_branch_numbers(initial_elem_id)
+      self._traverse_and_assign_branch_numbers(initial_elem_id, structure)
+
+  def add_structure_attrs(self):
+    self._handle_process()
+    while self.subprocesses:
+      self._handle_process(self.subprocesses.pop())
 
   def calc_grid_structure(self):
     """считаем размерность сетки и адреса ячеек в ней.
