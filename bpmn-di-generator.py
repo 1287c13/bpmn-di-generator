@@ -1,7 +1,8 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
-from typing import List, Literal
+from typing import List, Literal, Dict, Set
+from functools import reduce
 
 
 class BpmnXmlManager:
@@ -180,11 +181,14 @@ class BpmnLayoutGenerator:
   def _calc_grid_structure_for_process(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
+    todo optimize this: extract helpers, check up performance
     """
     current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
+    delayed_processing_queue: Set[str] = set([])
+    incoming_brunches_cache: Dict[str: List[str]] = {}
 
     col = 1
-    while len(current_col_elems_ids):  # пока есть хотя бы одна открытая ветка
+    while len(current_col_elems_ids):
       next_col_elems_ids: List[str] = []
       for _id in current_col_elems_ids:
         if 'col' not in structure[_id]:
@@ -195,6 +199,8 @@ class BpmnLayoutGenerator:
           source_nodes_ids = self._get_connected_nodes_ids(
             _id, structure, 'source')
 
+          incoming_brunches_cache[_id] = source_nodes_ids
+
           if len(source_nodes_ids) < 2:
 
             structure[_id]['col'] = col
@@ -203,6 +209,35 @@ class BpmnLayoutGenerator:
 
             for targ_node_id in target_nodes_ids:
               next_col_elems_ids.append(targ_node_id)
+
+          else:
+            delayed_processing_queue.add(_id)
+
+      ids_to_remove_from_queue = []
+      for _id in delayed_processing_queue:
+        is_element_needs_handling: bool
+
+        next_col_elems_brunches: List[int] = list(map(
+          lambda x: structure[x]['brunch'],
+          next_col_elems_ids))
+
+        checked_reasons: List[bool] = list(map(
+          lambda x: structure[x]['brunch'] in next_col_elems_brunches,
+          incoming_brunches_cache[_id]))
+
+        is_element_needs_handling = not reduce(
+          lambda x, y: x or y, checked_reasons)
+
+        if is_element_needs_handling:
+          structure[_id]['col'] = col
+          ids_to_remove_from_queue.append(_id)
+
+          if structure[_id]['tag'] == 'subProcess':
+            self.subprocesses.append(structure[_id]['children'])
+
+      while len(ids_to_remove_from_queue):
+        _id = ids_to_remove_from_queue.pop()
+        delayed_processing_queue.remove(_id)
 
       current_col_elems_ids = next_col_elems_ids
       col += 1
