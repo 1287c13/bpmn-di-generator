@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
-from typing import List
+from typing import List, Literal
 
 
 class BpmnXmlManager:
@@ -21,7 +21,8 @@ class BpmnXmlManager:
 
   def set_input_xml(self, input_xml):
     self.input_xml = input_xml
-    self.root = ElementTree.ElementTree(ElementTree.fromstring(self.input_xml)).getroot()
+    self.root = ElementTree.ElementTree(
+      ElementTree.fromstring(self.input_xml)).getroot()
 
   @staticmethod
   def parse_element(element):
@@ -47,12 +48,14 @@ class BpmnXmlManager:
 
   def extract_process_dict_repr(self):
     root = ElementTree.fromstring(self.input_xml)
-    processes = root.findall(f'./{self.root_tag_name}', namespaces=self.namespaces)
+    processes = root.findall(
+      f'./{self.root_tag_name}', namespaces=self.namespaces)
 
     if not processes:
       raise ValueError("BPMN XML is not valid: aint no <bpmn:process> tag")
 
-    first_process = processes[0]  # todo добавить поддержку схем с несколькими процессами
+    # todo добавить поддержку схем с несколькими процессами
+    first_process = processes[0]
     data = BpmnXmlManager.parse_element(first_process)
 
     return data
@@ -75,26 +78,53 @@ class BpmnLayoutGenerator:
   def generate_di_layer(self, tags_dict_repr):
     self.repr = list(tags_dict_repr.values())[0]['children']
 
-    self.add_structure_attrs()
-    self.calc_grid_structure()
+    self.call_process_handler('_add_structure_attrs_for_process')
+    self.call_process_handler('_calc_grid_structure_for_process')
     self.calc_elem_sizes()
     self.calc_grid_sizes()
     self.calc_elem_coords()
     self.calc_edges()
 
   @staticmethod
-  def _get_arrow_endpoint_node(arrow_id, side, structure):
-    """mode: enum = 'source' | 'target' """
-    return structure[arrow_id][f'{side}Ref']
+  def _get_arrow_endpoint_node(
+          arrow_id, direction: Literal['source', 'target'], structure):
 
-  def _handle_target_nodes(self, source_node_id, structure):
+    return structure[arrow_id][f'{direction}Ref']
+
+  @staticmethod
+  def _get_connected_flows_keyvalues(
+          parent_node_id,
+          structure,
+          direction: Literal['incoming', 'outgoing']):
+
+    return filter(
+      lambda x: x[1]['tag'] == direction,
+      structure[parent_node_id]['children'].items())
+
+  def _get_connected_nodes_ids(
+          self,
+          parent_node_id,
+          structure,
+          direction: Literal['source', 'target']):
+
+    flow_direction: Literal['incoming', 'outgoing'] = 'incoming'
+    if direction == 'target':
+      flow_direction = 'outgoing'
+
+    outgoing_flows_keyvalues = self._get_connected_flows_keyvalues(
+      parent_node_id, structure, flow_direction)
+
+    return list(map(
+      lambda x: self._get_arrow_endpoint_node(x[0], 'target', structure),
+      outgoing_flows_keyvalues))
+
+  def _explore_neighboring_nodes(self, parent_node_id, structure):
     """
-    Ищем следующие элементы. Первый возвращшаем, остальные помечаем к посещению.
+    Ищем следующие элементы. Первый возвращшаем,
+    остальные помечаем к посещению.
     """
-    outgoing_flows_keyvalues = filter(
-      lambda x: x[1]['tag'] == 'outgoing', structure[source_node_id]['children'].items())
-    target_nodes_ids = list(map(
-      lambda x: self._get_arrow_endpoint_node(x[0], 'target', structure), outgoing_flows_keyvalues))
+    target_nodes_ids = self._get_connected_nodes_ids(
+      parent_node_id, structure, 'target')
 
     self.nodes_to_visit_ids += target_nodes_ids[1:]
 
@@ -110,49 +140,71 @@ class BpmnLayoutGenerator:
     для следующих обнаруженных элементов, которые нужно посетить.
     """
     structure[initial_elem_id]['brunch'] = self.brunch_counter
-    next_elem_id = self._handle_target_nodes(initial_elem_id, structure)
+    next_elem_id = self._explore_neighboring_nodes(initial_elem_id, structure)
 
     while next_elem_id:
       if structure[next_elem_id]['tag'] == 'subProcess':
         self.subprocesses.append(structure[next_elem_id]['children'])
 
-      next_elem_id = self._handle_target_nodes(next_elem_id, structure)
+      next_elem_id = self._explore_neighboring_nodes(next_elem_id, structure)
 
     self.brunch_counter += 1
 
     next_brunch_first_elem = self.nodes_to_visit_ids.pop()
     try:
-      self._traverse_and_assign_branch_numbers(next_brunch_first_elem, structure)
+      self._traverse_and_assign_branch_numbers(next_brunch_first_elem,
+                                               structure)
     except IndexError:
       pass
 
-  def _handle_process(self, structure=None):
+  @staticmethod
+  def _get_start_events_ids(process):
+    return [v['id'] for k, v in process.items() if
+            v.get('tag') == 'startEvent']
+
+  def _add_structure_attrs_for_process(self, structure):
     """
     Собираем все стартовые события и запускаем разметку ветвей схемы.
     """
     self.brunch_counter = 1
-    self.start_events_ids = []
-
-    if not structure:
-      structure = self.repr
-
-    self.start_events_ids += [
-      v['id'] for k, v in structure.items() if v.get('tag') == 'startEvent']
-
+    self.start_events_ids = self._get_start_events_ids(structure)
     for initial_elem_id in self.start_events_ids:
       self._traverse_and_assign_branch_numbers(initial_elem_id, structure)
 
-  def add_structure_attrs(self):
-    self._handle_process()
+  def call_process_handler(self, handler_name):
+    self.subprocesses = []
+    getattr(self, handler_name)(self.repr)
     while self.subprocesses:
-      self._handle_process(self.subprocesses.pop())
+      getattr(self, handler_name)(self.subprocesses.pop())
 
-  def calc_grid_structure(self):
-    """считаем размерность сетки и адреса ячеек в ней.
-        Должен вызываться рекурсивно для поддержки субпроцессов.
-        Возможность наличия неограниченного количества субпроцессов
-        учесть в размерах сетки и в принципах индексации"""
-    pass
+  def _calc_grid_structure_for_process(self, structure):
+    """
+    Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
+
+    upd не помещать в очередь элементы, которые имеют больше одного входа
+    """
+    current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
+
+    col = 1
+    while len(current_col_elems_ids):  # пока есть хотя бы одна открытая ветка
+      next_col_elems_ids: List[str] = []
+      for _id in current_col_elems_ids:
+        if 'col' not in structure[_id]:
+
+          target_nodes_ids = self._get_connected_nodes_ids(
+            _id, structure, 'target')
+
+          source_nodes_ids = self._get_connected_nodes_ids(
+            _id, structure, 'source')
+
+          if len(source_nodes_ids) < 2:
+            structure[_id]['col'] = col
+
+            for targ_node_id in target_nodes_ids:
+              next_col_elems_ids.append(targ_node_id)
+
+      current_col_elems_ids = next_col_elems_ids
+      col += 1
 
   def calc_elem_sizes(self):
     """считаем размер элементов"""
