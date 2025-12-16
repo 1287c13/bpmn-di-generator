@@ -180,8 +180,6 @@ class BpmnLayoutGenerator:
   def _calc_grid_structure_for_process(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
-
-    upd не помещать в очередь элементы, которые имеют больше одного входа
     """
     current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
 
@@ -198,7 +196,10 @@ class BpmnLayoutGenerator:
             _id, structure, 'source')
 
           if len(source_nodes_ids) < 2:
+
             structure[_id]['col'] = col
+            if structure[_id]['tag'] == 'subProcess':
+              self.subprocesses.append(structure[_id]['children'])
 
             for targ_node_id in target_nodes_ids:
               next_col_elems_ids.append(targ_node_id)
