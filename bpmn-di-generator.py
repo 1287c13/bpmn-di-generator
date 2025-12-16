@@ -185,7 +185,7 @@ class BpmnLayoutGenerator:
     """
     current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
     delayed_processing_queue: Set[str] = set([])
-    incoming_brunches_cache: Dict[str: List[str]] = {}
+    incoming_nodes_ids_cache: Dict[str: List[str]] = {}
 
     col = 1
     while len(current_col_elems_ids):
@@ -199,7 +199,7 @@ class BpmnLayoutGenerator:
           source_nodes_ids = self._get_connected_nodes_ids(
             _id, structure, 'source')
 
-          incoming_brunches_cache[_id] = source_nodes_ids
+          incoming_nodes_ids_cache[_id] = source_nodes_ids
 
           if len(source_nodes_ids) < 2:
 
@@ -215,18 +215,13 @@ class BpmnLayoutGenerator:
 
       ids_to_remove_from_queue = []
       for _id in delayed_processing_queue:
-        is_element_needs_handling: bool
-
-        next_col_elems_brunches: List[int] = list(map(
-          lambda x: structure[x]['brunch'],
-          next_col_elems_ids))
 
         checked_reasons: List[bool] = list(map(
-          lambda x: structure[x]['brunch'] in next_col_elems_brunches,
-          incoming_brunches_cache[_id]))
+          lambda x: hasattr(structure[x], 'col'),
+          incoming_nodes_ids_cache[_id]))
 
-        is_element_needs_handling = not reduce(
-          lambda x, y: x or y, checked_reasons)
+        is_element_needs_handling = reduce(
+          lambda x, y: x and y, checked_reasons)
 
         if is_element_needs_handling:
           structure[_id]['col'] = col
