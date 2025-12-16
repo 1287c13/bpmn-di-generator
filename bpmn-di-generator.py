@@ -112,12 +112,12 @@ class BpmnLayoutGenerator:
     if direction == 'target':
       flow_direction = 'outgoing'
 
-    outgoing_flows_keyvalues = self._get_connected_flows_keyvalues(
+    connected_flows_keyvalues = self._get_connected_flows_keyvalues(
       parent_node_id, structure, flow_direction)
 
     return list(map(
-      lambda x: self._get_arrow_endpoint_node(x[0], 'target', structure),
-      outgoing_flows_keyvalues))
+      lambda x: self._get_arrow_endpoint_node(x[0], direction, structure),
+      connected_flows_keyvalues))
 
   def _explore_neighboring_nodes(self, parent_node_id, structure):
     """
@@ -217,7 +217,7 @@ class BpmnLayoutGenerator:
       for _id in delayed_processing_queue:
 
         checked_reasons: List[bool] = list(map(
-          lambda x: hasattr(structure[x], 'col'),
+          lambda x: 'col' in structure[x],
           incoming_nodes_ids_cache[_id]))
 
         is_element_needs_handling = reduce(
