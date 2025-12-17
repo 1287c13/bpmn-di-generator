@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
-from typing import List, Literal, Dict, Set
+from typing import List, Literal, Dict, Set, Tuple
 from functools import reduce
 
 
@@ -181,11 +181,12 @@ class BpmnLayoutGenerator:
   def _calc_grid_structure_for_process(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
-    todo optimize this: extract helpers, check up performance
+    todo refactor this: extract helpers at least
     """
     current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
     delayed_processing_queue: Set[str] = set([])
-    incoming_nodes_ids_cache: Dict[str: List[str]] = {}
+    source_nodes_ids_cache: Dict[str: Tuple[str]] = {}
+    target_nodes_ids_cache: Dict[str: Tuple[str]] = {}
 
     col = 1
     while len(current_col_elems_ids):
@@ -193,13 +194,11 @@ class BpmnLayoutGenerator:
       for _id in current_col_elems_ids:
         if 'col' not in structure[_id]:
 
-          target_nodes_ids = self._get_connected_nodes_ids(
-            _id, structure, 'target')
+          target_nodes_ids_cache[_id] = target_nodes_ids = \
+            tuple(self._get_connected_nodes_ids(_id, structure, 'target'))
 
-          source_nodes_ids = self._get_connected_nodes_ids(
-            _id, structure, 'source')
-
-          incoming_nodes_ids_cache[_id] = source_nodes_ids
+          source_nodes_ids_cache[_id] = source_nodes_ids = \
+            tuple(self._get_connected_nodes_ids(_id, structure, 'source'))
 
           if len(source_nodes_ids) < 2:
 
@@ -215,20 +214,30 @@ class BpmnLayoutGenerator:
 
       ids_to_remove_from_queue = []
       for _id in delayed_processing_queue:
-
         checked_reasons: List[bool] = list(map(
           lambda x: 'col' in structure[x],
-          incoming_nodes_ids_cache[_id]))
+          source_nodes_ids_cache[_id]))
+
+        are_source_nodes_placed_in_this_col = reduce(
+          lambda x, y: ('col' in structure[x] and structure[x]['col'] == col)
+          or ('col' in structure[y] and structure[y]['col'] == col),
+          source_nodes_ids_cache[_id])
 
         is_element_needs_handling = reduce(
-          lambda x, y: x and y, checked_reasons)
+          lambda x, y: x and y, checked_reasons) \
+                                    and not are_source_nodes_placed_in_this_col
 
         if is_element_needs_handling:
-          structure[_id]['col'] = col
           ids_to_remove_from_queue.append(_id)
 
-          if structure[_id]['tag'] == 'subProcess':
-            self.subprocesses.append(structure[_id]['children'])
+          if 'col' not in structure[_id]:
+
+            structure[_id]['col'] = col
+            if structure[_id]['tag'] == 'subProcess':
+              self.subprocesses.append(structure[_id]['children'])
+
+            for targ_node_id in target_nodes_ids_cache[_id]:
+              next_col_elems_ids.append(targ_node_id)
 
       while len(ids_to_remove_from_queue):
         _id = ids_to_remove_from_queue.pop()
