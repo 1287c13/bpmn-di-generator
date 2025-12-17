@@ -81,7 +81,7 @@ class BpmnLayoutGenerator:
 
     self.call_process_handler('_add_structure_attrs_for_process')
     self.call_process_handler('_calc_grid_structure_for_process')
-    self.calc_elem_sizes()
+    self.call_process_handler('_calc_elem_sizes_for_process')
     self.calc_grid_sizes()
     self.calc_elem_coords()
     self.calc_edges()
@@ -246,8 +246,7 @@ class BpmnLayoutGenerator:
       current_col_elems_ids = next_col_elems_ids
       col += 1
 
-  def calc_elem_sizes(self):
-    """считаем размер элементов"""
+  def _calc_elem_sizes_for_process(self, structure):
     pass
 
   def calc_grid_sizes(self):
