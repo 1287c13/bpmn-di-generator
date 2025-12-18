@@ -140,16 +140,22 @@ class BpmnLayoutGenerator:
     Проходим всю ветку начального элемента и делаем рекурсивный вызов
     для следующих обнаруженных элементов, которые нужно посетить.
     """
-    structure[initial_elem_id]['brunch'] = self.brunch_counter
-    next_elem_id = self._explore_neighboring_nodes(initial_elem_id, structure)
 
-    while next_elem_id:
-      if structure[next_elem_id]['tag'] == 'subProcess':
-        self.subprocesses.append(structure[next_elem_id]['children'])
+    if 'brunch' not in structure[initial_elem_id]:
 
-      next_elem_id = self._explore_neighboring_nodes(next_elem_id, structure)
+      structure[initial_elem_id]['brunch'] = self.brunch_counter
+      if structure[initial_elem_id]['tag'] == 'subProcess':
+        self.subprocesses.append(structure[initial_elem_id]['children'])
 
-    self.brunch_counter += 1
+      next_elem_id = self._explore_neighboring_nodes(initial_elem_id,
+                                                     structure)
+      while next_elem_id:
+        if structure[next_elem_id]['tag'] == 'subProcess':
+          self.subprocesses.append(structure[next_elem_id]['children'])
+
+        next_elem_id = self._explore_neighboring_nodes(next_elem_id, structure)
+
+      self.brunch_counter += 1
 
     next_brunch_first_elem = self.nodes_to_visit_ids.pop()
     try:
@@ -173,10 +179,10 @@ class BpmnLayoutGenerator:
       self._traverse_and_assign_branch_numbers(initial_elem_id, structure)
 
   def call_process_handler(self, handler_name):
-    self.subprocesses = []
     getattr(self, handler_name)(self.repr)
-    while self.subprocesses:
-      getattr(self, handler_name)(self.subprocesses.pop())
+
+    for subprocess in self.subprocesses:
+      getattr(self, handler_name)(subprocess)
 
   def _calc_grid_structure_for_process(self, structure):
     """
@@ -203,8 +209,6 @@ class BpmnLayoutGenerator:
           if len(source_nodes_ids) < 2:
 
             structure[_id]['col'] = col
-            if structure[_id]['tag'] == 'subProcess':
-              self.subprocesses.append(structure[_id]['children'])
 
             for targ_node_id in target_nodes_ids:
               next_col_elems_ids.append(targ_node_id)
@@ -233,8 +237,6 @@ class BpmnLayoutGenerator:
           if 'col' not in structure[_id]:
 
             structure[_id]['col'] = col
-            if structure[_id]['tag'] == 'subProcess':
-              self.subprocesses.append(structure[_id]['children'])
 
             for targ_node_id in target_nodes_ids_cache[_id]:
               next_col_elems_ids.append(targ_node_id)
