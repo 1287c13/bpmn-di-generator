@@ -71,6 +71,7 @@ class BpmnLayoutGenerator:
   def __init__(self):
     self.brunch_counter: int = 1
     self.repr: dict = {}
+    self.grid: Dict[str, Dict[str, List[int]]] = {}
     self.subprocesses: list = []
     self.start_events_ids: List[str] = []
     self.visited_nodes_ids: List[str] = []
@@ -79,10 +80,9 @@ class BpmnLayoutGenerator:
   def generate_di_layer(self, tags_dict_repr):
     self.repr = list(tags_dict_repr.values())[0]['children']
 
-    self.call_process_handler('_add_structure_attrs_for_process')
-    self.call_process_handler('_calc_grid_structure_for_process')
-    self.call_process_handler('_calc_elem_sizes_for_process')
-    self.calc_grid_sizes()
+    self.call_process_handler('add_structure_attrs')
+    self.call_process_handler('_calc_grid_structure')
+    self.call_process_handler('_calc_grid_sizes')
     self.calc_elem_coords()
     self.calc_edges()
 
@@ -169,7 +169,7 @@ class BpmnLayoutGenerator:
     return [v['id'] for k, v in process.items() if
             v.get('tag') == 'startEvent']
 
-  def _add_structure_attrs_for_process(self, structure):
+  def add_structure_attrs(self, structure):
     """
     Собираем все стартовые события и запускаем разметку ветвей схемы.
     """
@@ -184,7 +184,7 @@ class BpmnLayoutGenerator:
     for subprocess in self.subprocesses:
       getattr(self, handler_name)(subprocess)
 
-  def _calc_grid_structure_for_process(self, structure):
+  def _calc_grid_structure(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
     todo refactor this: extract helpers at least
@@ -248,11 +248,19 @@ class BpmnLayoutGenerator:
       current_col_elems_ids = next_col_elems_ids
       col += 1
 
-  def _calc_elem_sizes_for_process(self, structure):
-    pass
+  def _calc_grid_sizes(self, structure):
+    """считаем размер ячеек
 
-  def calc_grid_sizes(self):
-    """считаем размер ячеек"""
+    {"<id>": {"cols": [0, 0, 0], "rows": [0, 0, 0]}}
+
+    проходим сначала по субпроцессам от конца к началу массива - считаем в них
+    потом по основному процессу
+
+    для каждого (суб)процесса:
+      считаем адрес каждого элемента в субсетке (добавить метод)
+      рассчитываем сетку (с учетом субсетки) по формату в __init__
+      если это субпроцесс то корректируем его размер
+    """
     pass
 
   def calc_elem_coords(self):
