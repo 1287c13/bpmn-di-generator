@@ -66,10 +66,17 @@ class BpmnXmlManager:
     return json.dumps(di_layer_dict, indent=2)
 
 
+class Subprocess(dict):
+  def __init__(self, data: Dict):
+    super().__init__()
+    self.update(data)
+    self.id: str = ''
+
+
 class BpmnLayoutGenerator:
 
   def __init__(self):
-    self.brunch_counter: int = 1
+    self.branch_counter: int = 1
     self.repr: dict = {}
     self.grid: Dict[str, Dict[str, List[int]]] = {}
     self.subprocesses: list = []
@@ -121,7 +128,7 @@ class BpmnLayoutGenerator:
 
   def _explore_neighboring_nodes(self, parent_node_id, structure):
     """
-    Ищем следующие элементы. Первый возвращшаем,
+    Ищем следующие элементы. Первый возвращаем,
     остальные помечаем к посещению.
     """
     target_nodes_ids = self._get_connected_nodes_ids(
@@ -130,7 +137,7 @@ class BpmnLayoutGenerator:
     self.nodes_to_visit_ids += target_nodes_ids[1:]
 
     try:
-      structure[target_nodes_ids[0]].setdefault('brunch', self.brunch_counter)
+      structure[target_nodes_ids[0]].setdefault('branch', self.branch_counter)
       return target_nodes_ids[0]
     except IndexError:
       return None
@@ -141,25 +148,29 @@ class BpmnLayoutGenerator:
     для следующих обнаруженных элементов, которые нужно посетить.
     """
 
-    if 'brunch' not in structure[initial_elem_id]:
+    if 'branch' not in structure[initial_elem_id]:
 
-      structure[initial_elem_id]['brunch'] = self.brunch_counter
+      structure[initial_elem_id]['branch'] = self.branch_counter
       if structure[initial_elem_id]['tag'] == 'subProcess':
-        self.subprocesses.append(structure[initial_elem_id]['children'])
+        self.subprocesses.append(
+          Subprocess(structure[initial_elem_id]['children']))
+        self.subprocesses[-1].id = initial_elem_id
 
       next_elem_id = self._explore_neighboring_nodes(initial_elem_id,
                                                      structure)
       while next_elem_id:
         if structure[next_elem_id]['tag'] == 'subProcess':
-          self.subprocesses.append(structure[next_elem_id]['children'])
+          self.subprocesses.append(
+            Subprocess(structure[next_elem_id]['children']))
+          self.subprocesses[-1].id = next_elem_id
 
         next_elem_id = self._explore_neighboring_nodes(next_elem_id, structure)
 
-      self.brunch_counter += 1
+      self.branch_counter += 1
 
-    next_brunch_first_elem = self.nodes_to_visit_ids.pop()
+    next_branch_first_elem = self.nodes_to_visit_ids.pop()
     try:
-      self._traverse_and_assign_branch_numbers(next_brunch_first_elem,
+      self._traverse_and_assign_branch_numbers(next_branch_first_elem,
                                                structure)
     except IndexError:
       pass
@@ -173,7 +184,7 @@ class BpmnLayoutGenerator:
     """
     Собираем все стартовые события и запускаем разметку ветвей схемы.
     """
-    self.brunch_counter = 1
+    self.branch_counter = 1
     self.start_events_ids = self._get_start_events_ids(structure)
     for initial_elem_id in self.start_events_ids:
       self._traverse_and_assign_branch_numbers(initial_elem_id, structure)
@@ -228,8 +239,8 @@ class BpmnLayoutGenerator:
           source_nodes_ids_cache[_id])
 
         is_element_needs_handling = reduce(
-          lambda x, y: x and y, checked_reasons) \
-                                    and not are_source_nodes_placed_in_this_col
+          lambda x, y: x and y, checked_reasons
+        ) and not are_source_nodes_placed_in_this_col
 
         if is_element_needs_handling:
           ids_to_remove_from_queue.append(_id)
@@ -261,7 +272,16 @@ class BpmnLayoutGenerator:
       рассчитываем сетку (с учетом субсетки) по формату в __init__
       если это субпроцесс то корректируем его размер
     """
-    pass
+    for subprocess in reversed(self.subprocesses):
+      for elem_id in subprocess.keys():
+        params = self._calc_element_grid_params(elem_id)
+
+    for elem_id in structure.keys():
+      params = self._calc_element_grid_params(elem_id)
+
+  def _calc_element_grid_params(self, elem_id):
+    params = {'c': None, 'r': None, 'w': None, 'h': None}
+    return params
 
   def calc_elem_coords(self):
     """размещаем элементы по сетке (считаем координаты)"""
