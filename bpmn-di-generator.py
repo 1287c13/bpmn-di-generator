@@ -12,6 +12,7 @@ class BpmnXmlManager:
     self.input_xml_path = input_xml_path
     self.input_xml = None
     self.root = None
+    self.sizes_dict = {}
 
     if self.input_xml_path:
       try:
@@ -65,6 +66,34 @@ class BpmnXmlManager:
   def generate_di_layer_xml(di_layer_dict):
     return json.dumps(di_layer_dict, indent=2)
 
+  def collect_sizes(self):
+    """
+    Метод собирает все значения ширины и высоты (width и height)
+    из элементов слоя <bpmndi:BPMNDiagram> и сохраняет их в словаре,
+    доступном по свойствам 'bpmnElement'.
+    """
+    root = ElementTree.fromstring(self.input_xml)
+    namespace = {
+      'bpmndi': 'http://www.omg.org/spec/BPMN/20100524/DI',
+      'dc': 'http://www.omg.org/spec/DD/20100524/DC'
+    }
+
+    dimensions_dict = {}
+
+    diagram_node = root.find('.//bpmndi:BPMNDiagram', namespaces=namespace)
+
+    if diagram_node is not None:
+      shapes = diagram_node.findall('.//bpmndi:BPMNShape', namespaces=namespace)
+      for shape in shapes:
+        bounds = shape.find('dc:Bounds', namespaces=namespace)
+        if bounds is not None:
+          element_id = shape.get('bpmnElement')
+          width = float(bounds.get('width'))
+          height = float(bounds.get('height'))
+          dimensions_dict[element_id] = {'width': width, 'height': height}
+
+    self.sizes_dict = dimensions_dict
+
 
 class Subprocess(dict):
   def __init__(self, data: Dict):
@@ -80,15 +109,18 @@ class BpmnLayoutGenerator:
   def __init__(self):
     self.branch_counter: int = 1
     self.repr: dict = {}
-    self.grid: Dict[Literal['cols', 'rows'], List[int]] = {}
+    self.sizes: dict = {}
+    self.grid: Dict[Literal['cols', 'rows'], List[float]] = {}
     self.subprocesses: list = []
     self.start_events_ids: List[str] = []
     self.visited_nodes_ids: List[str] = []
     self.nodes_to_visit_ids: List[str] = []
     self.num_of_brunches: int = 0
+    self.visual_indent: float = 25.0
 
-  def generate_di_layer(self, tags_dict_repr):
+  def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
+    self.sizes = sizes
 
     self.call_process_handler('add_structure_attrs')
     self.call_process_handler('_calc_grid_structure')
@@ -290,6 +322,7 @@ class BpmnLayoutGenerator:
         params_list.append(self._calc_element_grid_params(elem, subprocess.lane))
 
       self._update_grid(subprocess.grid, params_list)
+      pass
 
     params_list = []
     for _id, elem in self.repr.items():
@@ -301,21 +334,21 @@ class BpmnLayoutGenerator:
       params_list.append(self._calc_element_grid_params(elem, lane))
 
     self._update_grid(self.grid, params_list)
+    pass
 
   def _calc_element_grid_params(self, elem, lane):
     return {
       'c': (elem['col'] - 1) * self.num_of_brunches + elem['branch'],
       'r': (lane - 1) * self.num_of_brunches + elem['branch'],
-      'w': 0,
-      'h': 0}
+      'w': self.sizes[elem['id']]['width'],
+      'h': self.sizes[elem['id']]['height']}
 
-  @staticmethod
-  def _update_grid(grid, params_list):
+  def _update_grid(self, grid, params_list):
     max_col_idx = max(map(lambda x: x['c'], params_list))
     max_row_idx = max(map(lambda x: x['r'], params_list))
 
-    grid['cols'] = [0] * max_col_idx
-    grid['rows'] = [0] * max_row_idx
+    grid['cols'] = [0.0] * max_col_idx
+    grid['rows'] = [0.0] * max_row_idx
 
     # todo выделить в одну функцию для строк и колонок
     for idx, _ in enumerate(grid['cols']):
@@ -323,18 +356,18 @@ class BpmnLayoutGenerator:
         grid['cols'][idx] = max(map(
           lambda x: x['w'],
           list(filter(lambda y: y['c'] == idx + 1, params_list))
-        ))
+        )) + 2 * self.visual_indent
       except ValueError:
-        grid['cols'][idx] = 0
+        grid['cols'][idx] = 0.0
 
     for idx, _ in enumerate(grid['rows']):
       try:
         grid['rows'][idx] = max(map(
           lambda x: x['h'],
           list(filter(lambda y: y['r'] == idx + 1, params_list))
-        ))
+        )) + 2 * self.visual_indent
       except ValueError:
-        grid['rows'][idx] = 0
+        grid['rows'][idx] = 0.0
 
   def _get_elem_lane_number(self, elem_id):
     lane_set_id = None
@@ -389,8 +422,12 @@ class BpmnDiEditorGui(Tk):
     input_xml = self.xml_input_field.get('1.0', END).strip()
     try:
       self.processor.set_input_xml(input_xml)
+      self.processor.collect_sizes()
       process_elems = self.processor.extract_process_dict_repr()
-      self.layout_generator.generate_di_layer(process_elems)
+
+      # todo классы запутались: передавать процессор в генератор целиком ?
+      self.layout_generator.generate_di_layer(
+        process_elems, self.processor.sizes_dict)
       di_layer_xml = self.processor.generate_di_layer_xml(
         self.layout_generator.repr)
 
