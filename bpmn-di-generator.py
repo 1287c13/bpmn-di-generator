@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 from tkinter import Tk, Label, Text, Button, END
 import json
-from typing import List, Literal, Dict, Set, Tuple
+from typing import List, Literal, Dict, Set, Tuple, Optional
 from functools import reduce
 
 
@@ -70,7 +70,9 @@ class Subprocess(dict):
   def __init__(self, data: Dict):
     super().__init__()
     self.update(data)
-    self.id: str = ''
+    self.id: Optional[str]
+    self.lane: Optional[int]
+    self.grid: Dict[str, Dict[str, List[int]]] = {}
 
 
 class BpmnLayoutGenerator:
@@ -78,18 +80,19 @@ class BpmnLayoutGenerator:
   def __init__(self):
     self.branch_counter: int = 1
     self.repr: dict = {}
-    self.grid: Dict[str, Dict[str, List[int]]] = {}
+    self.grid: Dict[Literal['cols', 'rows'], List[int]] = {}
     self.subprocesses: list = []
     self.start_events_ids: List[str] = []
     self.visited_nodes_ids: List[str] = []
     self.nodes_to_visit_ids: List[str] = []
+    self.num_of_brunches: int = 0
 
   def generate_di_layer(self, tags_dict_repr):
     self.repr = list(tags_dict_repr.values())[0]['children']
 
     self.call_process_handler('add_structure_attrs')
     self.call_process_handler('_calc_grid_structure')
-    self.call_process_handler('_calc_grid_sizes')
+    self.calc_grid_sizes()
     self.calc_elem_coords()
     self.calc_edges()
 
@@ -142,6 +145,13 @@ class BpmnLayoutGenerator:
     except IndexError:
       return None
 
+  def _add_subprocess(self, structure, elem_id):
+    self.subprocesses.append(
+      Subprocess(structure[elem_id]['children']))
+    self.subprocesses[-1].id = elem_id
+    self.subprocesses[-1].lane = self._get_elem_lane_number(elem_id) \
+                                 or structure.lane
+
   def _traverse_and_assign_branch_numbers(self, initial_elem_id, structure):
     """
     Проходим всю ветку начального элемента и делаем рекурсивный вызов
@@ -152,17 +162,13 @@ class BpmnLayoutGenerator:
 
       structure[initial_elem_id]['branch'] = self.branch_counter
       if structure[initial_elem_id]['tag'] == 'subProcess':
-        self.subprocesses.append(
-          Subprocess(structure[initial_elem_id]['children']))
-        self.subprocesses[-1].id = initial_elem_id
+        self._add_subprocess(structure, initial_elem_id)
 
       next_elem_id = self._explore_neighboring_nodes(initial_elem_id,
                                                      structure)
       while next_elem_id:
         if structure[next_elem_id]['tag'] == 'subProcess':
-          self.subprocesses.append(
-            Subprocess(structure[next_elem_id]['children']))
-          self.subprocesses[-1].id = next_elem_id
+          self._add_subprocess(structure, next_elem_id)
 
         next_elem_id = self._explore_neighboring_nodes(next_elem_id, structure)
 
@@ -198,7 +204,7 @@ class BpmnLayoutGenerator:
   def _calc_grid_structure(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
-    todo refactor this: extract helpers at least
+    todo рефачить
     """
     current_col_elems_ids: List[str] = self._get_start_events_ids(structure)
     delayed_processing_queue: Set[str] = set([])
@@ -259,29 +265,89 @@ class BpmnLayoutGenerator:
       current_col_elems_ids = next_col_elems_ids
       col += 1
 
-  def _calc_grid_sizes(self, structure):
-    """считаем размер ячеек
-
-    {"<id>": {"cols": [0, 0, 0], "rows": [0, 0, 0]}}
-
-    проходим сначала по субпроцессам от конца к началу массива - считаем в них
-    потом по основному процессу
-
-    для каждого (суб)процесса:
-      считаем адрес каждого элемента в субсетке (добавить метод)
-      рассчитываем сетку (с учетом субсетки) по формату в __init__
-      если это субпроцесс то корректируем его размер
+  def calc_grid_sizes(self):
     """
+    Рассчитываем положение каждого элемента в сетке исходя из его
+    ветки, номера в ветке и дорожки. Затем рассчитываем структуру
+    self.grid в формате:
+    {"cols": [0, 0, 0, ..], "rows": [0, 0, 0, ..]}
+    """
+    filtered_process = list(filter(
+      lambda x: x['tag'] not in ['sequenceFlow', 'laneSet'],
+      self.repr.values()))
+    self.num_of_brunches = reduce(
+      lambda acc, item: max(acc, item['branch']), filtered_process, 0)
+
     for subprocess in reversed(self.subprocesses):
-      for elem_id in subprocess.keys():
-        params = self._calc_element_grid_params(elem_id)
+      params_list = []
+      for _id, elem in subprocess.items():
 
-    for elem_id in structure.keys():
-      params = self._calc_element_grid_params(elem_id)
+        if elem['tag'] in ['laneSet', 'sequenceFlow', 'outgoing', 'incoming']:
+          continue
 
-  def _calc_element_grid_params(self, elem_id):
-    params = {'c': None, 'r': None, 'w': None, 'h': None}
-    return params
+        # все элементы развернутого подпроцесса находятся в одной дорожке
+        # (см ограничения в readme)
+        params_list.append(self._calc_element_grid_params(elem, subprocess.lane))
+
+      self._update_grid(subprocess.grid, params_list)
+
+    params_list = []
+    for _id, elem in self.repr.items():
+
+      if elem['tag'] in ['laneSet', 'sequenceFlow', 'outgoing', 'incoming']:
+        continue
+
+      lane = self._get_elem_lane_number(_id)
+      params_list.append(self._calc_element_grid_params(elem, lane))
+
+    self._update_grid(self.grid, params_list)
+
+  def _calc_element_grid_params(self, elem, lane):
+    return {
+      'c': (elem['col'] - 1) * self.num_of_brunches + elem['branch'],
+      'r': (lane - 1) * self.num_of_brunches + elem['branch'],
+      'w': 0,
+      'h': 0}
+
+  @staticmethod
+  def _update_grid(grid, params_list):
+    max_col_idx = max(map(lambda x: x['c'], params_list))
+    max_row_idx = max(map(lambda x: x['r'], params_list))
+
+    grid['cols'] = [0] * max_col_idx
+    grid['rows'] = [0] * max_row_idx
+
+    # todo выделить в одну функцию для строк и колонок
+    for idx, _ in enumerate(grid['cols']):
+      try:
+        grid['cols'][idx] = max(map(
+          lambda x: x['w'],
+          list(filter(lambda y: y['c'] == idx + 1, params_list))
+        ))
+      except ValueError:
+        grid['cols'][idx] = 0
+
+    for idx, _ in enumerate(grid['rows']):
+      try:
+        grid['rows'][idx] = max(map(
+          lambda x: x['h'],
+          list(filter(lambda y: y['r'] == idx + 1, params_list))
+        ))
+      except ValueError:
+        grid['rows'][idx] = 0
+
+  def _get_elem_lane_number(self, elem_id):
+    lane_set_id = None
+    for key in self.repr.keys():
+      if self.repr[key]['tag'] == 'laneSet':
+        lane_set_id = key
+        break
+
+    lanes = list(self.repr[lane_set_id]["children"].values())
+    for idx, lane in enumerate(lanes):
+      if elem_id in lane['children']:
+        return idx + 1
+    return None
 
   def calc_elem_coords(self):
     """размещаем элементы по сетке (считаем координаты)"""
