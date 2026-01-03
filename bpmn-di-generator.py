@@ -7,7 +7,11 @@ from functools import reduce
 
 class BpmnXmlManager:
   def __init__(self, input_xml_path='diagram.bpmn'):
-    self.namespaces = {'bpmn': 'http://www.omg.org/spec/BPMN/20100524/MODEL'}
+    self.namespaces = {
+      'bpmn': 'http://www.omg.org/spec/BPMN/20100524/MODEL',
+      'bpmndi': 'http://www.omg.org/spec/BPMN/20100524/DI',
+      'dc': 'http://www.omg.org/spec/DD/20100524/DC',
+      'di': 'http://www.omg.org/spec/DD/20100524/DI'}
     self.root_tag_name = 'bpmn:process'
     self.input_xml_path = input_xml_path
     self.input_xml = None
@@ -27,7 +31,12 @@ class BpmnXmlManager:
       ElementTree.fromstring(self.input_xml)).getroot()
 
   @staticmethod
-  def parse_element(element):
+  def parse_element(element: ElementTree.Element):
+    """
+    Получает элемент BPMN схемы.
+    Возвращает словарь в котором ключ это идентификатор элемента, а значение
+    это словарь всех атрибутов элемента.
+    """
     attrs = {
       'tag': element.tag.split('}')[-1],
       'text': '' if not element.text else element.text.strip()
@@ -62,34 +71,39 @@ class BpmnXmlManager:
 
     return data
 
-  @staticmethod
-  def generate_di_layer_xml(di_layer_dict):
-    return json.dumps(di_layer_dict, indent=2)
+  def generate_di_layer_xml(self, di_layer_dict):
+    for k, v in self.namespaces.items():
+      ElementTree.register_namespace(k, v)
+
+    root = ElementTree.fromstring(self.input_xml)
+    shapes = root.findall(".//bpmndi:BPMNShape", namespaces=self.namespaces)
+    for shape in shapes:
+      element_id = shape.attrib['bpmnElement']
+      if element_id in di_layer_dict:
+        bounds = shape.find("./dc:Bounds", namespaces=self.namespaces)
+        bounds.attrib['x'] = str(di_layer_dict[element_id]['x'])
+        bounds.attrib['y'] = str(di_layer_dict[element_id]['y'])
+
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + \
+           ElementTree.tostring(root, encoding='unicode', method='xml').strip()
 
   def collect_sizes(self):
+    self.sizes_dict = {}
+
     root = ElementTree.fromstring(self.input_xml)
-    namespace = {
-      'bpmndi': 'http://www.omg.org/spec/BPMN/20100524/DI',
-      'dc': 'http://www.omg.org/spec/DD/20100524/DC'
-    }
-
-    dimensions_dict = {}
-
-    diagram_node = root.find('.//bpmndi:BPMNDiagram', namespaces=namespace)
+    diagram_node = root.find(
+      './/bpmndi:BPMNDiagram', namespaces=self.namespaces)
 
     if diagram_node is not None:
       shapes = diagram_node.findall(
-        './/bpmndi:BPMNShape', namespaces=namespace)
-
+        './/bpmndi:BPMNShape', namespaces=self.namespaces)
       for shape in shapes:
-        bounds = shape.find('dc:Bounds', namespaces=namespace)
+        bounds = shape.find('dc:Bounds', namespaces=self.namespaces)
         if bounds is not None:
           element_id = shape.get('bpmnElement')
           width = float(bounds.get('width'))
           height = float(bounds.get('height'))
-          dimensions_dict[element_id] = {'width': width, 'height': height}
-
-    self.sizes_dict = dimensions_dict
+          self.sizes_dict[element_id] = {'width': width, 'height': height}
 
 
 class Subprocess(dict):
@@ -466,7 +480,7 @@ class BpmnDiEditorGui(Tk):
       self.layout_generator.generate_di_layer(
         process_elems, self.processor.sizes_dict)
       di_layer_xml = self.processor.generate_di_layer_xml(
-        self.layout_generator.repr)
+        self.layout_generator.elem_params)
 
       self.xml_output_field.insert(END, di_layer_xml)
 
