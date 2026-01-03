@@ -67,11 +67,6 @@ class BpmnXmlManager:
     return json.dumps(di_layer_dict, indent=2)
 
   def collect_sizes(self):
-    """
-    Метод собирает все значения ширины и высоты (width и height)
-    из элементов слоя <bpmndi:BPMNDiagram> и сохраняет их в словаре,
-    доступном по свойствам 'bpmnElement'.
-    """
     root = ElementTree.fromstring(self.input_xml)
     namespace = {
       'bpmndi': 'http://www.omg.org/spec/BPMN/20100524/DI',
@@ -83,7 +78,9 @@ class BpmnXmlManager:
     diagram_node = root.find('.//bpmndi:BPMNDiagram', namespaces=namespace)
 
     if diagram_node is not None:
-      shapes = diagram_node.findall('.//bpmndi:BPMNShape', namespaces=namespace)
+      shapes = diagram_node.findall(
+        './/bpmndi:BPMNShape', namespaces=namespace)
+
       for shape in shapes:
         bounds = shape.find('dc:Bounds', namespaces=namespace)
         if bounds is not None:
@@ -117,15 +114,17 @@ class BpmnLayoutGenerator:
     self.nodes_to_visit_ids: List[str] = []
     self.num_of_brunches: int = 0
     self.visual_indent: float = 25.0
+    self.elem_params: Dict[str, Dict[
+      Literal['id', 'c', 'r', 'w', 'h', 'x', 'y'], str or int or float]] = {}
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
     self.sizes = sizes
 
     self.call_process_handler('add_structure_attrs')
-    self.call_process_handler('_calc_grid_structure')
+    self.call_process_handler('calc_grid_structure')
     self.calc_grid_sizes()
-    self.calc_elem_coords()
+    self.call_process_handler('calc_elems_coords')
     self.calc_edges()
 
   @staticmethod
@@ -233,7 +232,7 @@ class BpmnLayoutGenerator:
     for subprocess in self.subprocesses:
       getattr(self, handler_name)(subprocess)
 
-  def _calc_grid_structure(self, structure):
+  def calc_grid_structure(self, structure):
     """
     Итерируемся по номерам столбцов и подбираем элементы для размещения в них.
     todo рефачить
@@ -319,10 +318,10 @@ class BpmnLayoutGenerator:
 
         # все элементы развернутого подпроцесса находятся в одной дорожке
         # (см ограничения в readme)
-        params_list.append(self._calc_element_grid_params(elem, subprocess.lane))
+        params_list.append(
+          self._calc_element_grid_params(elem, subprocess.lane))
 
       self._update_grid(subprocess.grid, params_list)
-      pass
 
     params_list = []
     for _id, elem in self.repr.items():
@@ -334,16 +333,26 @@ class BpmnLayoutGenerator:
       params_list.append(self._calc_element_grid_params(elem, lane))
 
     self._update_grid(self.grid, params_list)
-    pass
 
   def _calc_element_grid_params(self, elem, lane):
+
+    subprocess_width, subprocess_height = None, None
+    if elem['tag'] == 'subProcess':
+      subprocess = list(
+        filter(lambda x: x.id == elem['id'], self.subprocesses))[0]
+      subprocess_width, subprocess_height = \
+        sum(subprocess.grid['cols']), sum(subprocess.grid['rows'])
+
     return {
+      'id': elem['id'],
       'c': (elem['col'] - 1) * self.num_of_brunches + elem['branch'],
       'r': (lane - 1) * self.num_of_brunches + elem['branch'],
-      'w': self.sizes[elem['id']]['width'],
-      'h': self.sizes[elem['id']]['height']}
+      'w': subprocess_width or self.sizes[elem['id']]['width'],
+      'h': subprocess_height or self.sizes[elem['id']]['height']}
 
   def _update_grid(self, grid, params_list):
+    self.elem_params.update({i['id']: i for i in params_list})
+
     max_col_idx = max(map(lambda x: x['c'], params_list))
     max_row_idx = max(map(lambda x: x['r'], params_list))
 
@@ -382,9 +391,37 @@ class BpmnLayoutGenerator:
         return idx + 1
     return None
 
-  def calc_elem_coords(self):
-    """размещаем элементы по сетке (считаем координаты)"""
-    pass
+  def calc_elems_coords(self, structure):
+    """размещаем элементы внутри ячеек сетки (считаем координаты)"""
+
+    subprocess_shift_left, subprocess_shift_top = 0.0, 0.0
+    try:
+      grid = structure.grid
+      subprocess_shift_left = self.elem_params[structure.id]['x']
+      subprocess_shift_top = self.elem_params[structure.id]['y']
+    except AttributeError:
+      grid = self.grid
+
+    for key in structure.keys():
+
+      if key not in self.elem_params:
+        continue
+
+      params = self.elem_params[key]
+
+      cell_width = grid['cols'][params['c'] - 1]
+      cell_height = grid['rows'][params['r'] - 1]
+
+      accumulated_width = sum(grid['cols'][:params['c'] - 1])
+      accumulated_height = sum(grid['rows'][:params['r'] - 1])
+
+      params.update({
+        'x': accumulated_width +
+             (cell_width - params['w']) / 2 +
+             subprocess_shift_left,
+        'y': accumulated_height +
+             (cell_height - params['h']) / 2 +
+             subprocess_shift_top})
 
   def calc_edges(self):
     """считаем координаты стрелок"""
