@@ -1,8 +1,11 @@
 import xml.etree.ElementTree as ElementTree
-from tkinter import Tk, Label, Text, Button, END
-import json
 from typing import List, Literal, Dict, Set, Tuple, Optional
 from functools import reduce
+import tkinter as tk
+from tkinter import filedialog
+import re
+import os.path
+from tkinter import ttk
 
 
 class BpmnXmlManager:
@@ -442,35 +445,151 @@ class BpmnLayoutGenerator:
     pass
 
 
-class BpmnDiEditorGui(Tk):
-  def __init__(self, processor, layout_generator):
+class BpmnDiEditorGui(tk.Tk):
+  def __init__(self):
     super().__init__()
-    self.title('BPMN DI Editor')
-    self.processor = processor
-    self.layout_generator = layout_generator
-    self.xml_input_field = None
-    self.xml_output_field = None
+    self.title('BPMN Viewer')
 
-    self._create_ui()
+    self.entry_file = None
+    self.chk_var = None
+    self.text_xml = None
 
-  def _create_ui(self):
-    Label(self, text='Input XML:').grid(row=0, column=0, sticky='W')
-    self._add_text_field('xml_input_field', 0)
-    Button(self, text='Convert',
-           command=self.convert_xml).grid(row=2, column=0, columnspan=2)
-    Label(self, text='Output XML:').grid(row=3, column=0, sticky='W')
-    self._add_text_field('xml_output_field', 3)
+    self.bg_color = '#2B2B2B'
+    self.text_bg_color = '#1E1E1E'
+    self.button_bg_color = '#3D59AB'
+    self.button_fg_color = '#CCCCCC'
+    self.scrollbar_color = '#333333'
+    self.toolbar_bg_color = '#2B2B2B'
+    self.border_color = '#444444'
+    self.checkbox_bg_color = '#2B2B2B'
+    self.checkbox_fg_color = '#BBBBBB'
+    self.checkbox_ind_color = '#FFBBBB'
 
-    self.xml_input_field.insert(END, self.processor.input_xml or '')
+    self.configure(bg=self.bg_color)
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.map('TCheckbutton', background=[('', self.checkbox_bg_color)],
+              foreground=[('', self.checkbox_fg_color)],
+              indicatorcolor=[('', self.checkbox_ind_color)])
+    style.map('TScrollbar', background=[('', self.scrollbar_color)],
+              troughcolor=[('', self.scrollbar_color)],
+              darkcolor=[('', self.scrollbar_color)],
+              lightcolor=[('', self.scrollbar_color)],
+              sliderrelief=[('', 'flat')])
 
-  def _add_text_field(self, field_name, row_number):
-    setattr(self, field_name, Text(self, wrap='none'))
-    getattr(self, field_name).grid(row=row_number, column=1, sticky='NSEW')
+    self.create_top_panel()
+    self.create_text_area()
+
+    self.processor = BpmnXmlManager()
+    self.layout_generator = BpmnLayoutGenerator()
+    self.highlighter = XMLHighlighter(self.text_xml)
+
+  def create_top_panel(self):
+    toolbar_frame = tk.Frame(self, bg=self.toolbar_bg_color)
+    toolbar_frame.pack(fill=tk.X, side=tk.TOP, padx=10, pady=10)
+
+    self.entry_file = tk.Entry(toolbar_frame, width=50,
+                               fg=self.button_fg_color, bg=self.text_bg_color,
+                               bd=2, relief=tk.SOLID,
+                               insertbackground=self.button_fg_color,
+                               highlightthickness=0,
+                               highlightbackground=self.border_color)
+    self.entry_file.pack(side=tk.LEFT)
+    self.entry_file.insert(tk.END, '/.bpmn')
+
+    btn_select_file = tk.Button(toolbar_frame, text="Выбрать файл",
+                                command=self.select_file,
+                                bg=self.button_bg_color,
+                                fg=self.button_fg_color,
+                                activebackground=self.button_bg_color,
+                                activeforeground=self.button_fg_color, bd=2,
+                                relief=tk.RIDGE, highlightthickness=0,
+                                highlightbackground=self.border_color)
+    btn_select_file.pack(side=tk.LEFT, padx=5)
+
+    btn_calculate_di = tk.Button(toolbar_frame, text="Пересчитать di слой",
+                                 command=self.convert_xml,
+                                 bg=self.button_bg_color,
+                                 fg=self.button_fg_color,
+                                 activebackground=self.button_bg_color,
+                                 activeforeground=self.button_fg_color, bd=2,
+                                 relief=tk.RIDGE, highlightthickness=0,
+                                 highlightbackground=self.border_color)
+    btn_calculate_di.pack(side=tk.LEFT, padx=5)
+
+    btn_save_file = tk.Button(toolbar_frame, text="Сохранить файл",
+                              command=self.save_file, bg=self.button_bg_color,
+                              fg=self.button_fg_color,
+                              activebackground=self.button_bg_color,
+                              activeforeground=self.button_fg_color, bd=2,
+                              relief=tk.RIDGE, highlightthickness=0,
+                              highlightbackground=self.border_color)
+    btn_save_file.pack(side=tk.LEFT, padx=5)
+
+  def create_text_area(self):
+    text_frame = tk.Frame(self, bg=self.bg_color)
+    text_frame.pack(fill=tk.BOTH, expand=True)
+
+    self.chk_var = tk.BooleanVar(value=True)
+    check_button = ttk.Checkbutton(text_frame, text="Включить подсветку",
+                                   variable=self.chk_var,
+                                   command=self.toggle_highlight)
+    check_button.pack(side=tk.BOTTOM, anchor=tk.E)
+
+    scrollbar_y = ttk.Scrollbar(text_frame, orient=tk.VERTICAL)
+    scrollbar_x = ttk.Scrollbar(text_frame, orient=tk.HORIZONTAL)
+    self.text_xml = tk.Text(text_frame, height=20, width=80, wrap=tk.NONE,
+                            yscrollcommand=scrollbar_y.set,
+                            xscrollcommand=scrollbar_x.set,
+                            fg=self.button_fg_color, bg=self.text_bg_color,
+                            insertbackground=self.button_fg_color,
+                            font=("Consolas", 12))
+    scrollbar_y.config(command=self.text_xml.yview)
+    scrollbar_x.config(command=self.text_xml.xview)
+    scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+    scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+    self.text_xml.pack(expand=True, fill=tk.BOTH)
+
+  def toggle_highlight(self):
+    self.highlighter.is_enabled = not self.highlighter.is_enabled
+    if self.highlighter.is_enabled:
+      self.chk_var.set(True)
+      self.highlighter.highlight()
+    else:
+      self.chk_var.set(False)
+      for tag_type in self.highlighter.tags.keys():
+        self.text_xml.tag_remove(tag_type, "1.0", tk.END)
+
+  def select_file(self):
+    file_path = filedialog.askopenfilename(
+      filetypes=[("BPMN files", "*.bpmn")])
+    if file_path:
+      self.entry_file.delete(0, tk.END)
+      self.entry_file.insert(tk.END, file_path)
+      try:
+        with open(file_path, 'r') as f:
+          self.text_xml.delete('1.0', tk.END)
+          self.text_xml.insert(tk.END, f.read())
+          self.highlighter.highlight()
+      except Exception as e:
+        print(f'Ошибка чтения файла {file_path}: {e}')
+
+  def save_file(self):
+    current_filename = self.entry_file.get().strip()
+    base, ext = os.path.splitext(current_filename)
+    new_filename = f'{base}-autolayout{ext}'
+    try:
+      with open(new_filename, 'w') as f:
+        f.write(self.text_xml.get("1.0", tk.END))
+      print(f'Файл успешно сохранён: {new_filename}')
+    except Exception as e:
+      print(f'Ошибка записи файла: {e}')
+
+  def on_focus_out(self, event):
+    self.highlighter.highlight()
 
   def convert_xml(self):
-    self.xml_output_field.delete('1.0', END)
-
-    input_xml = self.xml_input_field.get('1.0', END).strip()
+    input_xml = self.text_xml.get('1.0', tk.END).strip()
     try:
       self.processor.set_input_xml(input_xml)
       self.processor.collect_sizes()
@@ -482,14 +601,49 @@ class BpmnDiEditorGui(Tk):
       di_layer_xml = self.processor.generate_di_layer_xml(
         self.layout_generator.elem_params)
 
-      self.xml_output_field.insert(END, di_layer_xml)
+      self.text_xml.delete('1.0', tk.END)
+      self.text_xml.insert(tk.END, di_layer_xml)
 
     except ElementTree.ParseError:
-      self.xml_output_field.insert(END, 'XML is not valid')
+      self.text_xml.insert(tk.END, 'XML is not valid')
+
+
+class XMLHighlighter:
+  def __init__(self, text_widget):
+    self.text_widget = text_widget
+    self.is_enabled = True
+    self.tags = {
+      "open_tag": {"pattern": r'<[\w:]+(?=[^>]*(>|/>))', "color": "#FF6F00"},
+      "close_tag": {"pattern": r'</[\w:]+>', "color": "#FF6F00"},
+      "special_char": {
+          "pattern": r'[<>=/?":]|bpmn|xml|xmlns|bpmndi|dc|di',
+          "color": "#555555"},
+      "attr_name": {"pattern": r'\w+(?=\s*=)', "color": "#1DA1F2"},
+      "attr_value": {"pattern": r'"[^"]+"', "color": "#00C853"}}
+    self.setup_tags()
+
+  def setup_tags(self):
+    for tag_type, config in self.tags.items():
+      self.text_widget.tag_configure(tag_type, foreground=config["color"])
+
+  def convert_to_tkindex(self, position):
+    widget = self.text_widget
+    cursor_position = widget.index(f"1.0+{position}c")
+    return cursor_position
+
+  def highlight(self):
+    if not self.is_enabled:
+      return
+    content = self.text_widget.get("1.0", tk.END)
+    for tag_type, config in self.tags.items():
+      matches = [(m.start(), m.end()) for m in
+                 re.finditer(config['pattern'], content)]
+      for start, end in matches:
+        char_start = self.convert_to_tkindex(start)
+        char_end = self.convert_to_tkindex(end)
+        self.text_widget.tag_add(tag_type, char_start, char_end)
 
 
 if __name__ == '__main__':
-  xml_processor = BpmnXmlManager()
-  bpmn_layout_generator = BpmnLayoutGenerator()
-  app = BpmnDiEditorGui(xml_processor, bpmn_layout_generator)
+  app = BpmnDiEditorGui()
   app.mainloop()
