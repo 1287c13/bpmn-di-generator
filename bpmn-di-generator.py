@@ -86,7 +86,8 @@ class BpmnXmlManager:
         bounds = shape.find("./dc:Bounds", namespaces=self.namespaces)
         bounds.attrib['x'] = str(di_layer_dict[element_id]['x'])
         bounds.attrib['y'] = str(di_layer_dict[element_id]['y'])
-        if shape.attrib['isExpanded'] == 'true':
+        if 'isExpanded' in shape.attrib \
+                and shape.attrib['isExpanded'] == 'true':
           bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
           bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
@@ -133,7 +134,7 @@ class BpmnLayoutGenerator:
     self.visited_nodes_ids: List[str] = []
     self.nodes_to_visit_ids: List[str] = []
     self.num_of_brunches: int = 0
-    self.visual_indent: float = 25.0
+    self.visual_indent: float = 12.0
     self.elem_params: Dict[str, Dict[
       Literal['id', 'c', 'r', 'w', 'h', 'x', 'y'], str or int or float]] = {}
 
