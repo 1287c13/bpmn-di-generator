@@ -86,6 +86,9 @@ class BpmnXmlManager:
         bounds = shape.find("./dc:Bounds", namespaces=self.namespaces)
         bounds.attrib['x'] = str(di_layer_dict[element_id]['x'])
         bounds.attrib['y'] = str(di_layer_dict[element_id]['y'])
+        if shape.attrib['isExpanded'] == 'true':
+          bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
+          bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + \
            ElementTree.tostring(root, encoding='unicode', method='xml').strip()
@@ -495,7 +498,7 @@ class BpmnDiEditorGui(tk.Tk):
                                highlightthickness=0,
                                highlightbackground=self.border_color)
     self.entry_file.pack(side=tk.LEFT)
-    self.entry_file.insert(tk.END, '/.bpmn')
+    self.entry_file.insert(tk.END, '/diagram.bpmn')
 
     btn_select_file = tk.Button(toolbar_frame, text="Выбрать файл",
                                 command=self.select_file,
@@ -614,12 +617,12 @@ class XMLHighlighter:
     self.is_enabled = True
     self.tags = {
       "open_tag": {"pattern": r'<[\w:]+(?=[^>]*(>|/>))', "color": "#FF6F00"},
-      "close_tag": {"pattern": r'</[\w:]+>', "color": "#FF6F00"},
+      "close_tag": {"pattern": r'</[\w:]+>', "color": "#555555"},
       "special_char": {
           "pattern": r'[<>=/?":]|bpmn|xml|xmlns|bpmndi|dc|di',
           "color": "#555555"},
       "attr_name": {"pattern": r'\w+(?=\s*=)', "color": "#1DA1F2"},
-      "attr_value": {"pattern": r'"[^"]+"', "color": "#00C853"}}
+      "attr_value": {"pattern": r'"[^"]+"', "color": "#7ddba3"}}
     self.setup_tags()
 
   def setup_tags(self):
