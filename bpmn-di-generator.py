@@ -86,8 +86,12 @@ class BpmnXmlManager:
         bounds = shape.find("./dc:Bounds", namespaces=self.namespaces)
         bounds.attrib['x'] = str(di_layer_dict[element_id]['x'])
         bounds.attrib['y'] = str(di_layer_dict[element_id]['y'])
-        if 'isExpanded' in shape.attrib \
-                and shape.attrib['isExpanded'] == 'true':
+
+        if ('isExpanded' in shape.attrib
+            and shape.attrib['isExpanded'] == 'true') \
+           or ('spec' in di_layer_dict[element_id]
+            and di_layer_dict[element_id]['spec'] == 'lane'):
+
           bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
           bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
@@ -136,7 +140,9 @@ class BpmnLayoutGenerator:
     self.num_of_brunches: int = 0
     self.visual_indent: float = 12.0
     self.elem_params: Dict[str, Dict[
-      Literal['id', 'c', 'r', 'w', 'h', 'x', 'y'], str or int or float]] = {}
+      Literal['id', 'c', 'r', 'w', 'h', 'x', 'y', 'spec'],
+      str or int or float
+    ]] = {}
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -146,6 +152,7 @@ class BpmnLayoutGenerator:
     self.call_process_handler('calc_grid_structure')
     self.calc_grid_sizes()
     self.call_process_handler('calc_elems_coords')
+    self.update_pool()
     self.calc_edges()
 
   @staticmethod
@@ -443,6 +450,37 @@ class BpmnLayoutGenerator:
         'y': accumulated_height +
              (cell_height - params['h']) / 2 +
              subprocess_shift_top})
+
+  def update_pool(self):
+    for elem in self.repr.values():
+      if elem['tag'] != 'laneSet':
+        continue
+
+      lanes_count = len(elem['children'])
+      lane_size = len(self.grid['rows']) // lanes_count
+      lanes = [self.grid['rows'][i * lane_size:(i + 1) * lane_size] for i in
+               range(lanes_count)]
+      heights = [sum(lane) for lane in lanes]
+      width = sum(self.grid['cols'])
+
+      self.elem_params['laneSet'] = {
+        'x': 0.0,
+        'y': 0.0,
+        'w': width,
+        'h': sum(heights),
+        'spec': 'laneSet'}
+
+      y_accumulator = 0
+      for i, lane in enumerate(elem['children'].values()):
+        self.elem_params[lane['id']] = {
+          'x': 0.0,
+          'y': y_accumulator,
+          'w': width,
+          'h': heights[i],
+          'spec': 'lane'}
+        y_accumulator += heights[i]
+
+      break
 
   def calc_edges(self):
     """считаем координаты стрелок"""
