@@ -93,6 +93,23 @@ class BpmnXmlManager:
         bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
         bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
+    shapes = self.root.findall(
+      ".//bpmndi:BPMNEdge", namespaces=self.namespaces)
+    for shape in shapes:
+      edge_id = shape.get('bpmnElement')
+
+      if edge_id in di_layer_dict:
+        new_waypoints = di_layer_dict[edge_id]['waypoints']
+
+        for wp in shape.findall('.//di:waypoint', namespaces=self.namespaces):
+          shape.remove(wp)
+
+        for point in new_waypoints:
+          waypoint = ElementTree.SubElement(
+            shape, '{%s}waypoint' % self.namespaces['di'])
+          waypoint.set('x', str(point[0]))
+          waypoint.set('y', str(point[1]))
+
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + \
            ElementTree.tostring(
              self.root, encoding='unicode', method='xml').strip()
@@ -143,6 +160,7 @@ class BpmnLayoutGenerator:
       str or int or float
     ]] = {}
     self.pool_elem_shift = 30.0  # todo считать по исходному di слою
+    self.edges_params: Dict[str, Dict] = {}
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -153,7 +171,7 @@ class BpmnLayoutGenerator:
     self.calc_grid_sizes()
     self.call_process_handler('calc_elems_coords')
     self.update_pool()
-    self.calc_edges()
+    self.call_process_handler('calc_edges')
 
   @staticmethod
   def _get_arrow_endpoint_node(
@@ -482,9 +500,56 @@ class BpmnLayoutGenerator:
 
       break
 
-  def calc_edges(self):
-    """считаем координаты стрелок"""
-    pass
+  def calc_edges(self, structure):
+
+    for k, v in structure.items():
+      if v['tag'] == 'sequenceFlow':
+        source_params = self.elem_params[v['sourceRef']]
+        target_params = self.elem_params[v['targetRef']]
+
+        arrow_type = 'rl'
+        is_right_shift = source_params['c'] < target_params['c']
+        is_down_shift = source_params['r'] < target_params['r']
+        is_up_shift = source_params['r'] > target_params['r']
+        if is_right_shift and is_down_shift:
+          arrow_type = 'bl'
+        elif is_right_shift and is_up_shift:
+          arrow_type = 'rb'
+        elif 'Gateway' in source_params['id'] \
+                and 'Gateway' in target_params['id']:
+          arrow_type = 'bb'
+        elif not is_right_shift:
+          arrow_type = 'tt'
+
+        first_waypoint = self._get_node_handle_coords(
+          source_params['id'], arrow_type[0])
+        last_waypoint = self._get_node_handle_coords(
+          target_params['id'], arrow_type[1])
+        if arrow_type == 'bl':
+          waypoints = [
+            first_waypoint,
+            (first_waypoint[0], last_waypoint[1]),
+            last_waypoint]
+        elif arrow_type == 'rb':
+          waypoints = [
+            first_waypoint,
+            (last_waypoint[0], first_waypoint[1]),
+            last_waypoint]
+        else:
+          waypoints = [first_waypoint, last_waypoint]
+
+        self.edges_params.update({k: {'waypoints': waypoints}})
+
+  def _get_node_handle_coords(self, node_id, handle_type):
+    params = self.elem_params[node_id]
+    if handle_type == 'r':
+      return params['x'] + params['w'], params['y'] + params['h'] / 2
+    elif handle_type == 'l':
+      return params['x'], params['y'] + params['h'] / 2
+    elif handle_type == 'b':
+      return params['x'] + params['w'] / 2, params['y'] + params['h']
+    elif handle_type == 't':
+      return params['x'] + params['w'] / 2, params['y']
 
 
 class BpmnDiEditorGui(tk.Tk):
@@ -572,7 +637,7 @@ class BpmnDiEditorGui(tk.Tk):
     text_frame = tk.Frame(self, bg=self.bg_color)
     text_frame.pack(fill=tk.BOTH, expand=True)
 
-    self.chk_var = tk.BooleanVar(value=True)
+    self.chk_var = tk.BooleanVar(value=False)
     check_button = ttk.Checkbutton(text_frame, text="Включить подсветку",
                                    variable=self.chk_var,
                                    command=self.toggle_highlight)
@@ -641,7 +706,8 @@ class BpmnDiEditorGui(tk.Tk):
       self.layout_generator.generate_di_layer(
         process_elems, self.processor.sizes_dict)
       di_layer_xml = self.processor.generate_di_layer_xml(
-        self.layout_generator.elem_params)
+        {**self.layout_generator.elem_params,
+         **self.layout_generator.edges_params})
 
       self.text_xml.delete('1.0', tk.END)
       self.text_xml.insert(tk.END, di_layer_xml)
@@ -653,7 +719,7 @@ class BpmnDiEditorGui(tk.Tk):
 class XMLHighlighter:
   def __init__(self, text_widget):
     self.text_widget = text_widget
-    self.is_enabled = True
+    self.is_enabled = False
     self.tags = {
       "open_tag": {"pattern": r'<[\w:]+(?=[^>]*(>|/>))', "color": "#FF6F00"},
       "close_tag": {"pattern": r'</[\w:]+>', "color": "#555555"},
