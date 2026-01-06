@@ -78,25 +78,24 @@ class BpmnXmlManager:
     for k, v in self.namespaces.items():
       ElementTree.register_namespace(k, v)
 
-    root = ElementTree.fromstring(self.input_xml)
-    shapes = root.findall(".//bpmndi:BPMNShape", namespaces=self.namespaces)
+    shapes = self.root.findall(
+      ".//bpmndi:BPMNShape", namespaces=self.namespaces)
     for shape in shapes:
       element_id = shape.attrib['bpmnElement']
+
+      if 'Participant' in element_id:
+        element_id = 'laneSet'
+
       if element_id in di_layer_dict:
         bounds = shape.find("./dc:Bounds", namespaces=self.namespaces)
         bounds.attrib['x'] = str(di_layer_dict[element_id]['x'])
         bounds.attrib['y'] = str(di_layer_dict[element_id]['y'])
-
-        if ('isExpanded' in shape.attrib
-            and shape.attrib['isExpanded'] == 'true') \
-           or ('spec' in di_layer_dict[element_id]
-            and di_layer_dict[element_id]['spec'] == 'lane'):
-
-          bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
-          bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
+        bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
+        bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + \
-           ElementTree.tostring(root, encoding='unicode', method='xml').strip()
+           ElementTree.tostring(
+             self.root, encoding='unicode', method='xml').strip()
 
   def collect_sizes(self):
     self.sizes_dict = {}
@@ -143,6 +142,7 @@ class BpmnLayoutGenerator:
       Literal['id', 'c', 'r', 'w', 'h', 'x', 'y', 'spec'],
       str or int or float
     ]] = {}
+    self.pool_elem_shift = 30.0  # todo считать по исходному di слою
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -464,9 +464,9 @@ class BpmnLayoutGenerator:
       width = sum(self.grid['cols'])
 
       self.elem_params['laneSet'] = {
-        'x': 0.0,
+        'x': -self.pool_elem_shift,
         'y': 0.0,
-        'w': width,
+        'w': width + self.pool_elem_shift,
         'h': sum(heights),
         'spec': 'laneSet'}
 
