@@ -501,44 +501,58 @@ class BpmnLayoutGenerator:
       break
 
   def calc_edges(self, structure):
+    """
+    Для каждой стрелки  определяем ее геометрию (как она идет от элемента
+    к элементу). Далее в зависимости от геометрии этой стрелки:
+    - получаем координаты начальной и конечной точки
+    - рассчитываем промежуточные точки
+    - добавляем массив точек этой стрелки в self.edges_params
+    """
 
     for k, v in structure.items():
-      if v['tag'] == 'sequenceFlow':
-        source_params = self.elem_params[v['sourceRef']]
-        target_params = self.elem_params[v['targetRef']]
+      if not v['tag'] == 'sequenceFlow':
+        continue
 
-        arrow_type = 'rl'
-        is_right_shift = source_params['c'] < target_params['c']
-        is_down_shift = source_params['r'] < target_params['r']
-        is_up_shift = source_params['r'] > target_params['r']
-        if is_right_shift and is_down_shift:
-          arrow_type = 'bl'
-        elif is_right_shift and is_up_shift:
-          arrow_type = 'rb'
-        elif 'Gateway' in source_params['id'] \
-                and 'Gateway' in target_params['id']:
-          arrow_type = 'bb'
-        elif not is_right_shift:
-          arrow_type = 'tt'
+      source_params = self.elem_params[v['sourceRef']]
+      target_params = self.elem_params[v['targetRef']]
 
-        first_waypoint = self._get_node_handle_coords(
-          source_params['id'], arrow_type[0])
-        last_waypoint = self._get_node_handle_coords(
-          target_params['id'], arrow_type[1])
-        if arrow_type == 'bl':
-          waypoints = [
-            first_waypoint,
-            (first_waypoint[0], last_waypoint[1]),
-            last_waypoint]
-        elif arrow_type == 'rb':
-          waypoints = [
-            first_waypoint,
-            (last_waypoint[0], first_waypoint[1]),
-            last_waypoint]
-        else:
-          waypoints = [first_waypoint, last_waypoint]
+      arrow_type = 'rl'
+      is_right_shift = source_params['c'] < target_params['c']
+      is_down_shift = source_params['r'] < target_params['r']
+      is_up_shift = source_params['r'] > target_params['r']
 
-        self.edges_params.update({k: {'waypoints': waypoints}})
+      if is_right_shift and is_down_shift:
+        arrow_type = 'bl'
+
+      elif is_right_shift and is_up_shift:
+        arrow_type = 'rb'
+
+      elif 'Gateway' in source_params['id'] \
+              and 'Gateway' in target_params['id']\
+              and not self._is_upper_branch_of_gateway(source_params['id'], k):
+        arrow_type = 'bb'
+
+      elif not is_right_shift:
+        arrow_type = 'tt'
+
+      first_waypoint = self._get_node_handle_coords(
+        source_params['id'], arrow_type[0])
+      last_waypoint = self._get_node_handle_coords(
+        target_params['id'], arrow_type[1])
+      if arrow_type == 'bl':
+        waypoints = [
+          first_waypoint,
+          (first_waypoint[0], last_waypoint[1]),
+          last_waypoint]
+      elif arrow_type == 'rb':
+        waypoints = [
+          first_waypoint,
+          (last_waypoint[0], first_waypoint[1]),
+          last_waypoint]
+      else:
+        waypoints = [first_waypoint, last_waypoint]
+
+      self.edges_params.update({k: {'waypoints': waypoints}})
 
   def _get_node_handle_coords(self, node_id, handle_type):
     params = self.elem_params[node_id]
@@ -551,6 +565,24 @@ class BpmnLayoutGenerator:
     elif handle_type == 't':
       return params['x'] + params['w'] / 2, params['y']
 
+  def _is_upper_branch_of_gateway(
+          self, gateway_id, flow_id, branch_type='outgoing'):
+
+    def _(elements):
+      try:
+        return list(filter(
+          lambda x: x[1]['tag'] == branch_type,
+          elements[gateway_id]['children'].items()))[0][0]
+
+      except KeyError:
+        return None
+
+    for s in [self.repr, *self.subprocesses]:
+      res = _(s)
+      if res:
+        return res == flow_id
+
+    raise KeyError
 
 class BpmnDiEditorGui(tk.Tk):
   def __init__(self):
