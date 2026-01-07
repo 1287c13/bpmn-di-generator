@@ -521,11 +521,21 @@ class BpmnLayoutGenerator:
       is_down_shift = source_params['r'] < target_params['r']
       is_up_shift = source_params['r'] > target_params['r']
 
-      if is_right_shift and is_down_shift:
+      if is_right_shift and is_down_shift \
+              and 'Gateway' in source_params['id'] \
+              and not self._is_upper_branch_of_gateway(source_params['id'], k):
         arrow_type = 'bl'
 
-      elif is_right_shift and is_up_shift:
+      elif is_right_shift and is_down_shift:
+        arrow_type = 'rt'
+
+      elif is_right_shift and is_up_shift \
+              and 'Gateway' in target_params['id'] \
+              and not self._is_upper_branch_of_gateway(target_params['id'], k):
         arrow_type = 'rb'
+
+      elif is_right_shift and is_up_shift:
+        arrow_type = 'tl'
 
       elif 'Gateway' in source_params['id'] \
               and 'Gateway' in target_params['id']\
@@ -539,15 +549,35 @@ class BpmnLayoutGenerator:
         source_params['id'], arrow_type[0])
       last_waypoint = self._get_node_handle_coords(
         target_params['id'], arrow_type[1])
-      if arrow_type == 'bl':
+      if arrow_type in ['bl', 'tl']:
         waypoints = [
           first_waypoint,
           (first_waypoint[0], last_waypoint[1]),
           last_waypoint]
-      elif arrow_type == 'rb':
+      elif arrow_type in ['rb', 'rt']:
         waypoints = [
           first_waypoint,
           (last_waypoint[0], first_waypoint[1]),
+          last_waypoint]
+      elif arrow_type == 'bb':
+        lower_row = max([source_params['r'], target_params['r']])
+        elems_of_that_row = list(filter(
+          lambda x: x['r'] == lower_row,
+          [i for i in self.elem_params.values() if 'r' in i]
+        ))
+        elems_of_this_structure = list(filter(
+          lambda x: x['id'] in [e['id'] for e in elems_of_that_row],
+          [i for i in structure.values() if 'id' in i]))
+        largest_elem = max(
+          elems_of_this_structure,
+          key=lambda x: self.elem_params[x['id']]['h'])
+        largest_elem_params = self.elem_params[largest_elem['id']]
+        y = largest_elem_params['y'] + largest_elem_params['h'] \
+            + self.visual_indent
+        waypoints = [
+          first_waypoint,
+          (first_waypoint[0], y),
+          (last_waypoint[0], y),
           last_waypoint]
       else:
         waypoints = [first_waypoint, last_waypoint]
@@ -583,6 +613,7 @@ class BpmnLayoutGenerator:
         return res == flow_id
 
     raise KeyError
+
 
 class BpmnDiEditorGui(tk.Tk):
   def __init__(self):
