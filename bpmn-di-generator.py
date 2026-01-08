@@ -161,6 +161,9 @@ class BpmnLayoutGenerator:
     ]] = {}
     self.pool_elem_shift = 30.0  # todo считать по исходному di слою
     self.edges_params: Dict[str, Dict] = {}
+    self.change_event_lanes = True
+    self.change_closing_gateways_lanes = True
+    self.lanes_cache = {}
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -381,7 +384,20 @@ class BpmnLayoutGenerator:
       if elem['tag'] in ['laneSet', 'sequenceFlow', 'outgoing', 'incoming']:
         continue
 
-      lane = self._get_elem_lane_number(_id)
+      if self.change_event_lanes and 'Event' in elem['tag']\
+              or \
+              self.change_closing_gateways_lanes and 'Gateway' in elem['tag']:
+        source_nodes_ids = self._get_connected_nodes_ids(
+          elem['id'], self.repr, 'source')
+        if len(source_nodes_ids):
+          lane = self.lanes_cache.get(source_nodes_ids[0])\
+                 or self._get_elem_lane_number(source_nodes_ids[0])
+          self.lanes_cache.update({_id: lane})
+        else:
+          lane = self._get_elem_lane_number(_id)
+      else:
+        lane = self._get_elem_lane_number(_id)
+
       params_list.append(self._calc_element_grid_params(elem, lane))
 
     self._update_grid(self.grid, params_list)
@@ -567,6 +583,8 @@ class BpmnLayoutGenerator:
           (last_waypoint[0], first_waypoint[1]),
           last_waypoint]
       elif arrow_type == 'bb':
+        # todo теперь в self.elem_params есть id процесса, можно
+        #  упростить это все
         lower_row = max([source_params['r'], target_params['r']])
         elems_of_that_row = list(filter(
           lambda x: x['r'] == lower_row,
