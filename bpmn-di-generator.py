@@ -93,6 +93,20 @@ class BpmnXmlManager:
         bounds.attrib['width'] = str(di_layer_dict[element_id]['w'])
         bounds.attrib['height'] = str(di_layer_dict[element_id]['h'])
 
+        label = shape.find("./bpmndi:BPMNLabel", namespaces=self.namespaces)
+        l_bounds = label.find("./dc:Bounds", namespaces=self.namespaces)
+        try:
+          l_bounds.attrib['x'] = str(
+            di_layer_dict[element_id]['x'] +
+            di_layer_dict[element_id].get('label_dx')
+          )
+          l_bounds.attrib['y'] = str(
+            di_layer_dict[element_id]['y'] +
+            di_layer_dict[element_id].get('label_dy')
+          )
+        except TypeError:
+          pass
+
     shapes = self.root.findall(
       ".//bpmndi:BPMNEdge", namespaces=self.namespaces)
     for shape in shapes:
@@ -130,7 +144,23 @@ class BpmnXmlManager:
           element_id = shape.get('bpmnElement')
           width = float(bounds.get('width'))
           height = float(bounds.get('height'))
-          self.sizes_dict[element_id] = {'width': width, 'height': height}
+          x = float(bounds.get('x'))
+          y = float(bounds.get('y'))
+          entry = {'width': width, 'height': height, 'x': x, 'y': y}
+
+          label_element = shape.find(
+            'bpmndi:BPMNLabel', namespaces=self.namespaces)
+          if label_element is not None:
+            label_bounds = label_element.find(
+              'dc:Bounds', namespaces=self.namespaces)
+            if label_bounds is not None:
+              label_dx = float(label_bounds.get('x'))
+              label_dy = float(label_bounds.get('y'))
+              entry.update({
+                'label_dx': label_dx - entry['x'],
+                'label_dy': label_dy - entry['y']})
+
+          self.sizes_dict[element_id] = entry
 
 
 class Subprocess(dict):
@@ -417,7 +447,9 @@ class BpmnLayoutGenerator:
       'r': (lane - 1) * self.num_of_brunches + elem['branch'],
       'w': subprocess_width or self.sizes[elem['id']]['width'],
       'h': subprocess_height or self.sizes[elem['id']]['height'],
-      'p': process}
+      'p': process,
+      'label_dx': self.sizes[elem['id']].get('label_dx'),
+      'label_dy': self.sizes[elem['id']].get('label_dy')}
 
   def _update_grid(self, grid, params_list):
     self.elem_params.update({i['id']: i for i in params_list})
