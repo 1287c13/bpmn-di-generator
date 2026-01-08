@@ -156,7 +156,7 @@ class BpmnLayoutGenerator:
     self.num_of_brunches: int = 0
     self.visual_indent: float = 12.0
     self.elem_params: Dict[str, Dict[
-      Literal['id', 'c', 'r', 'w', 'h', 'x', 'y', 'spec'],
+      Literal['id', 'c', 'r', 'w', 'h', 'x', 'y', 'p', 'spec'],
       str or int or float
     ]] = {}
     self.pool_elem_shift = 30.0  # todo считать по исходному di слою
@@ -365,9 +365,15 @@ class BpmnLayoutGenerator:
         # все элементы развернутого подпроцесса находятся в одной дорожке
         # (см ограничения в readme)
         params_list.append(
-          self._calc_element_grid_params(elem, subprocess.lane))
+          self._calc_element_grid_params(elem, subprocess.lane, subprocess.id))
 
       self._update_grid(subprocess.grid, params_list)
+
+      subprocess.grid['rows'] = [
+        self.visual_indent, *subprocess.grid['rows'], self.visual_indent]
+      for v in [
+        i for i in self.elem_params.values() if subprocess.id == i['p']]:
+        v['r'] += 1
 
     params_list = []
     for _id, elem in self.repr.items():
@@ -380,7 +386,7 @@ class BpmnLayoutGenerator:
 
     self._update_grid(self.grid, params_list)
 
-  def _calc_element_grid_params(self, elem, lane):
+  def _calc_element_grid_params(self, elem, lane, process=None):
 
     subprocess_width, subprocess_height = None, None
     if elem['tag'] == 'subProcess':
@@ -394,7 +400,8 @@ class BpmnLayoutGenerator:
       'c': (elem['col'] - 1) * self.num_of_brunches + elem['branch'],
       'r': (lane - 1) * self.num_of_brunches + elem['branch'],
       'w': subprocess_width or self.sizes[elem['id']]['width'],
-      'h': subprocess_height or self.sizes[elem['id']]['height']}
+      'h': subprocess_height or self.sizes[elem['id']]['height'],
+      'p': process}
 
   def _update_grid(self, grid, params_list):
     self.elem_params.update({i['id']: i for i in params_list})
