@@ -124,6 +124,12 @@ class BpmnXmlManager:
           waypoint.set('x', str(point[0]))
           waypoint.set('y', str(point[1]))
 
+        label = shape.find("./bpmndi:BPMNLabel", namespaces=self.namespaces)
+        if label:
+          l_bounds = label.find("./dc:Bounds", namespaces=self.namespaces)
+          l_bounds.attrib['x'] = str(di_layer_dict[edge_id]['label'][0])
+          l_bounds.attrib['y'] = str(di_layer_dict[edge_id]['label'][1])
+
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + \
            ElementTree.tostring(
              self.root, encoding='unicode', method='xml').strip()
@@ -640,7 +646,9 @@ class BpmnLayoutGenerator:
       else:
         waypoints = [first_waypoint, last_waypoint]
 
-      self.edges_params.update({k: {'waypoints': waypoints}})
+      self.edges_params.update({k: {
+        'waypoints': waypoints,
+        'label': tuple(x + self.visual_indent / 2 for x in first_waypoint)}})
 
   def _get_node_handle_coords(self, node_id, handle_type):
     params = self.elem_params[node_id]
