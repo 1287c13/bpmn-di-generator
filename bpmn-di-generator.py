@@ -419,7 +419,8 @@ class BpmnLayoutGenerator:
               self.change_closing_gateways_lanes and 'Gateway' in elem['tag']:
         source_nodes_ids = self._get_connected_nodes_ids(
           elem['id'], self.repr, 'source')
-        if len(source_nodes_ids):
+        if len(source_nodes_ids) and\
+                elem['branch'] == self.repr[source_nodes_ids[0]]['branch']:
           lane = self.lanes_cache.get(source_nodes_ids[0])\
                  or self._get_elem_lane_number(source_nodes_ids[0])
           self.lanes_cache.update({_id: lane})
