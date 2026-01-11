@@ -1,11 +1,12 @@
 import xml.etree.ElementTree as ElementTree
-from typing import List, Literal, Dict, Set, Tuple, Optional
+from typing import List, Literal, Dict, Set, Tuple, Optional, Any
 from functools import reduce
 import tkinter as tk
 from tkinter import filedialog
 import re
 import os.path
 from tkinter import ttk
+import itertools
 
 
 class BpmnXmlManager:
@@ -209,8 +210,9 @@ class BpmnLayoutGenerator:
     self.call_process_handler('calc_grid_structure')
     self.calc_grid_sizes()
     self.call_process_handler('calc_elems_coords')
-    self.update_pool()
     self.call_process_handler('calc_edges')
+    self.optimize_layout()
+    self.update_pool()
 
   @staticmethod
   def _get_arrow_endpoint_node(
@@ -679,6 +681,112 @@ class BpmnLayoutGenerator:
         return res == flow_id
 
     raise KeyError
+
+  def optimize_layout(self):
+    col = len(self.grid['cols'])
+    while col:
+      self._shift_elements(col, 'cols')
+      col -= 1
+
+  def _shift_elements(self, idx, axis: Literal['cols', 'rows']):
+    """
+    Пытаемся разделить схему на две части и сдвинуть элементы по выбранному
+      направлению.
+    :param idx: номер столбца или колонки начиная с которого нужно сдвинуть
+      элементы
+    :param axis: измерение по которому происходит деление схемы для сдвига
+    """
+
+    other_axis: Literal['cols', 'rows'] = 'cols'
+    if axis == 'cols':
+      other_axis = 'rows'
+
+    elements_to_shift = self._filter_elements(idx, axis, 'end')
+    rest_els = self._filter_elements(idx, axis, 'begin')
+
+    if not elements_to_shift or not rest_els:
+      return
+
+    # проходимся вдоль линии сдвига, определяем для каждой "полосы" расстояние
+    #  между сдвигаемыми группами элементов. Минимальное из этих расстояний
+    #  это то расстояние, на которое можно сдвинуть элементы без наложения
+    dim = 'x' if axis == 'cols' else 'y'
+    other_dim = 'y' if axis == 'cols' else 'x'
+    distances = []
+    acc_size = 0
+    for i, size in enumerate(self.grid[other_axis]):
+
+      shifting_projection = float('inf')
+      try:
+        shifting_projection = min(
+          filter(
+            lambda e: e[other_dim] in range(int(acc_size), int(acc_size+size)),
+            elements_to_shift),
+          key=lambda e: e[dim])[dim]
+      except ValueError:
+        pass
+
+      static_projection = 0
+      try:
+        static_projection = max(
+          filter(
+            lambda e: e[other_dim] in range(int(acc_size), int(acc_size+size)),
+            rest_els),
+          key=lambda e: e[dim])[dim]
+      except ValueError:
+        pass
+
+      distances.append(shifting_projection - static_projection)
+
+      acc_size += size
+
+  def _filter_elements(self, idx: int, axis: Literal['cols', 'rows'],
+                       direction: Literal['begin', 'end', 'exact']):
+    """
+    :param idx: номер столбца или колонки по которому нужно разделить элементы,
+      нумерация начинается с 1
+    :param axis: измерение по которому происходит визуальное деление схемы
+      (вертикально или горизонтально)
+    :param direction: какие части вернуть: начала или концы. Переданный idx
+      входит в конец но не входит в начало.
+    :return: фильтр элементов, узлов стрелок и лэйблов, полученный
+      из self.elem_params и self.edges_params. Все вэйпойнты распакованы
+      в общий список, в этот список добавлены лэйблы к стрелкам, а к каждому
+      вэйпойнту добавлен id стрелки-родителя и признак является ли вэйпойнт
+      лэйблом.
+    """
+
+    if not self.grid[axis][idx - 1]:
+      return
+
+    def construct_filter_lambda():
+      _axis = 'x' if axis == 'cols' else 'y'
+      filter_function_mapping = {
+        'begin': lambda x: x[_axis] < lower_border,
+        'end': lambda x: x[_axis] >= lower_border,
+        'exact': lambda x: lower_border <= x[_axis] < upper_border
+      }
+      return filter_function_mapping[direction]
+
+    lower_border = sum(self.grid[axis][:idx - 1])
+    upper_border = lower_border + self.grid[axis][idx - 1]
+
+    all_waypoints = reduce(
+      lambda acc, item: acc + (
+        [
+          {'x': i[0], 'y': i[1], 'is_label': False, 'parent': item[0]}
+          for i in item[1]['waypoints']
+        ] + [
+          {'x': item[1]['label'][0], 'y': item[1]['label'][1],
+           'is_label': True, 'parent': item[0]}
+        ]
+      ),
+      self.edges_params.items(),
+      [])
+
+    return itertools.chain(
+      filter(construct_filter_lambda(), self.elem_params.values()),
+      filter(construct_filter_lambda(), all_waypoints))
 
 
 class BpmnDiEditorGui(tk.Tk):
