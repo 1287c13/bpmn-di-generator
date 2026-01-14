@@ -1,5 +1,5 @@
 import xml.etree.ElementTree as ElementTree
-from typing import List, Literal, Dict, Set, Tuple, Optional, Any
+from typing import List, Literal, Dict, Set, Tuple, Optional, cast
 from functools import reduce
 import tkinter as tk
 from tkinter import filedialog
@@ -211,7 +211,7 @@ class BpmnLayoutGenerator:
     self.calc_grid_sizes()
     self.call_process_handler('calc_elems_coords')
     self.call_process_handler('calc_edges')
-    self.optimize_layout()
+    # self.optimize_layout()
     self.update_pool()
 
   @staticmethod
@@ -684,7 +684,7 @@ class BpmnLayoutGenerator:
 
   def optimize_layout(self):
     col = len(self.grid['cols'])
-    while col:
+    while col > 40:
       self._shift_elements(col, 'cols')
       col -= 1
 
@@ -701,27 +701,20 @@ class BpmnLayoutGenerator:
     if axis == 'cols':
       other_axis = 'rows'
 
-    elements_to_shift = self._filter_elements(idx, axis, 'end')
-    rest_els = self._filter_elements(idx, axis, 'begin')
-
-    if not elements_to_shift or not rest_els:
-      return
+    elements_to_shift = list(self._filter_elements(idx, axis, 'end'))
+    rest_els = list(self._filter_elements(idx, axis, 'begin'))
 
     # проходимся вдоль линии сдвига, определяем для каждой "полосы" расстояние
     #  между сдвигаемыми группами элементов. Минимальное из этих расстояний
     #  это то расстояние, на которое можно сдвинуть элементы без наложения
-    dim = 'x' if axis == 'cols' else 'y'
-    other_dim = 'y' if axis == 'cols' else 'x'
+    dim = cast(Literal['x', 'y'], 'x' if axis == 'cols' else 'y')
     distances = []
-    acc_size = 0
-    for i, size in enumerate(self.grid[other_axis]):
+    for i, _ in enumerate(self.grid[other_axis]):
 
       shifting_projection = float('inf')
       try:
         shifting_projection = min(
-          filter(
-            lambda e: e[other_dim] in range(int(acc_size), int(acc_size+size)),
-            elements_to_shift),
+          self._filter_elements(i + 1, other_axis, 'exact', elements_to_shift),
           key=lambda e: e[dim])[dim]
       except ValueError:
         pass
@@ -729,19 +722,55 @@ class BpmnLayoutGenerator:
       static_projection = 0
       try:
         static_projection = max(
-          filter(
-            lambda e: e[other_dim] in range(int(acc_size), int(acc_size+size)),
-            rest_els),
+          self._filter_elements(i + 1, other_axis, 'exact', rest_els),
           key=lambda e: e[dim])[dim]
       except ValueError:
         pass
 
       distances.append(shifting_projection - static_projection)
 
-      acc_size += size
+    shift_value = max(min(distances) - 2 * self.visual_indent, 0)
+
+    if not shift_value:
+      return
+
+    # сдвигаем каждый элемент на вычисленную величину
+    for elem in elements_to_shift:
+      if 'id' in elem:
+        elem[dim] -= shift_value
+      elif not elem['is_label']:
+        self.shift_single_waypoint(elem, shift_value, dim)
+
+  def shift_single_waypoint(
+          self, wp_data, shift_value, dim: Literal['x', 'y']):
+
+    edge = self.edges_params[wp_data['parent']]
+    wp_coords = edge['waypoints'][wp_data['idx']]
+    if dim == 'x':
+      edge['waypoints'][wp_data['idx']] = (
+        wp_coords[0] - shift_value, wp_coords[1])
+    else:
+      edge['waypoints'][wp_data['idx']] = (
+        wp_coords[0], wp_coords[1] - shift_value)
+
+  def _get_converted_waypoints(self):
+    return reduce(
+      lambda acc, item: acc + (
+        [
+          {'x': i[1][0], 'y': i[1][1], 'is_label': False, 'parent': item[0],
+           'idx': i[0]}
+          for i in enumerate(item[1]['waypoints'])
+        ] + [
+          {'x': item[1]['label'][0], 'y': item[1]['label'][1],
+           'is_label': True, 'parent': item[0], 'idx': -1}
+        ]
+      ),
+      self.edges_params.items(),
+      [])
 
   def _filter_elements(self, idx: int, axis: Literal['cols', 'rows'],
-                       direction: Literal['begin', 'end', 'exact']):
+                       direction: Literal['begin', 'end', 'exact'],
+                       els_to_filter=None):
     """
     :param idx: номер столбца или колонки по которому нужно разделить элементы,
       нумерация начинается с 1
@@ -757,7 +786,7 @@ class BpmnLayoutGenerator:
     """
 
     if not self.grid[axis][idx - 1]:
-      return
+      return filter(lambda x: None, [])
 
     def construct_filter_lambda():
       _axis = 'x' if axis == 'cols' else 'y'
@@ -771,22 +800,14 @@ class BpmnLayoutGenerator:
     lower_border = sum(self.grid[axis][:idx - 1])
     upper_border = lower_border + self.grid[axis][idx - 1]
 
-    all_waypoints = reduce(
-      lambda acc, item: acc + (
-        [
-          {'x': i[0], 'y': i[1], 'is_label': False, 'parent': item[0]}
-          for i in item[1]['waypoints']
-        ] + [
-          {'x': item[1]['label'][0], 'y': item[1]['label'][1],
-           'is_label': True, 'parent': item[0]}
-        ]
-      ),
-      self.edges_params.items(),
-      [])
+    if not els_to_filter:
+      converted_waypoints =  self._get_converted_waypoints()
+      return itertools.chain(
+        filter(construct_filter_lambda(), self.elem_params.values()),
+        filter(construct_filter_lambda(), converted_waypoints))
 
-    return itertools.chain(
-      filter(construct_filter_lambda(), self.elem_params.values()),
-      filter(construct_filter_lambda(), all_waypoints))
+    else:
+      return filter(construct_filter_lambda(), els_to_filter)
 
 
 class BpmnDiEditorGui(tk.Tk):
