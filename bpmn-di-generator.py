@@ -686,9 +686,8 @@ class BpmnLayoutGenerator:
 
   def optimize_layout(self):
     col = len(self.grid['cols'])
-    while col > 41:
-      self._shift_elements(col, 'cols')
-      col -= 1
+    while col:
+      col = self._shift_elements(col, 'cols')
 
   def _shift_elements(self, idx, axis: Literal['cols', 'rows']):
     """
@@ -731,19 +730,34 @@ class BpmnLayoutGenerator:
 
       distances.append(shifting_projection - static_projection)
 
-    shift_value = max(min(distances) - 2 * self.visual_indent, 0)
+    shift_value = max(min(distances) - 3 * self.visual_indent, 0)
 
     if not shift_value:
-      return
+      return idx - 1
 
     # сдвигаем каждый элемент на вычисленную величину
+    closest_shifted_dot = float('inf')
     for elem in elements_to_shift:
       if 'id' in elem:
         elem[dim] -= shift_value
+        closest_shifted_dot = min(elem[dim], closest_shifted_dot)
       elif not elem['is_label']:
-        self.shift_single_waypoint(elem, shift_value, dim)
+        self._shift_single_waypoint(elem, shift_value, dim)
 
-  def shift_single_waypoint(
+    affected_lane = self._get_lane_for_coord(closest_shifted_dot, axis) + 1
+    idx = idx - 1 if affected_lane == idx else affected_lane
+
+    return idx
+
+  def _get_lane_for_coord(self, dot_projection, axis):
+    acc = 0
+    for i, size in enumerate(self.grid[axis]):
+      acc += size
+      if dot_projection < acc:
+        return i
+    return len(self.grid[axis]) - 1
+
+  def _shift_single_waypoint(
           self, wp_data, shift_value, dim: Literal['x', 'y']):
 
     edge = self.edges_params[wp_data['parent']]
