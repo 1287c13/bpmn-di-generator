@@ -7,6 +7,8 @@ import re
 import os.path
 from tkinter import ttk
 import itertools
+from collections import Counter
+from copy import deepcopy
 
 
 class BpmnXmlManager:
@@ -211,7 +213,7 @@ class BpmnLayoutGenerator:
     self.calc_grid_sizes()
     self.call_process_handler('calc_elems_coords')
     self.call_process_handler('calc_edges')
-    # self.optimize_layout()
+    self.optimize_layout()
     self.update_pool()
 
   @staticmethod
@@ -684,7 +686,7 @@ class BpmnLayoutGenerator:
 
   def optimize_layout(self):
     col = len(self.grid['cols'])
-    while col > 40:
+    while col > 41:
       self._shift_elements(col, 'cols')
       col -= 1
 
@@ -758,15 +760,48 @@ class BpmnLayoutGenerator:
       lambda acc, item: acc + (
         [
           {'x': i[1][0], 'y': i[1][1], 'is_label': False, 'parent': item[0],
-           'idx': i[0]}
+           'idx': i[0], 'is_virtual': False}
           for i in enumerate(item[1]['waypoints'])
         ] + [
           {'x': item[1]['label'][0], 'y': item[1]['label'][1],
-           'is_label': True, 'parent': item[0], 'idx': -1}
+           'is_label': True, 'parent': item[0], 'idx': -1, 'is_virtual': False}
         ]
       ),
       self.edges_params.items(),
       [])
+
+  def _get_virtual_waypoints(self, axis):
+    axis_idx = 0 if axis == 'cols' else 1
+    axis_xy = 'x' if axis == 'cols' else 'y'
+    other_axis_xy = 'y' if axis == 'cols' else 'x'
+    filtered_data = deepcopy(self.edges_params)
+
+    for key in list(filtered_data.keys()):
+      waypoints = filtered_data[key]['waypoints']
+      x_counts = Counter(x for x, y in waypoints)
+      new_waypoints = [
+        point for point in waypoints if x_counts.get(point[axis_idx], 0) > 1]
+
+      filtered_data[key]['waypoints'] = new_waypoints
+
+      if not new_waypoints:
+        del filtered_data[key]
+
+    acc = 0
+    virtual_waypoints = []
+    for key, val in filtered_data.items():
+      coords = list(map(lambda x: x[1 - axis_idx], val['waypoints']))
+      start_coord, end_coord = min(coords), max(coords)
+      const_component = val['waypoints'][0][axis_idx]
+      for bar in self.grid[axis]:
+        acc += bar
+        if start_coord < acc < end_coord:
+          virtual_waypoints.append({
+            'is_label': False, 'parent': key, 'idx': None,
+            'is_virtual': True, axis_xy: const_component,
+            other_axis_xy: (2 * acc + bar) / 2})
+
+    return virtual_waypoints
 
   def _filter_elements(self, idx: int, axis: Literal['cols', 'rows'],
                        direction: Literal['begin', 'end', 'exact'],
@@ -780,7 +815,11 @@ class BpmnLayoutGenerator:
       входит в конец но не входит в начало.
     :return: фильтр элементов, узлов стрелок и лэйблов, полученный
       из self.elem_params и self.edges_params. Все вэйпойнты распакованы
-      в общий список, в этот список добавлены лэйблы к стрелкам, а к каждому
+      в общий список, в этот список добавлены:
+        - лэйблы к стрелкам
+        - виртуальные вэйпойнты (в точках пересечеия поперечных стрелок с
+          центральными линиями сетки)
+      К каждому
       вэйпойнту добавлен id стрелки-родителя и признак является ли вэйпойнт
       лэйблом.
     """
@@ -801,7 +840,8 @@ class BpmnLayoutGenerator:
     upper_border = lower_border + self.grid[axis][idx - 1]
 
     if not els_to_filter:
-      converted_waypoints =  self._get_converted_waypoints()
+      converted_waypoints = self._get_converted_waypoints()
+      converted_waypoints += self._get_virtual_waypoints(axis)
       return itertools.chain(
         filter(construct_filter_lambda(), self.elem_params.values()),
         filter(construct_filter_lambda(), converted_waypoints))
