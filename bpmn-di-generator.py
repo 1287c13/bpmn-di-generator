@@ -193,7 +193,7 @@ class BpmnLayoutGenerator:
     self.visited_nodes_ids: List[str] = []
     self.nodes_to_visit_ids: List[str] = []
     self.num_of_brunches: int = 0
-    self.visual_indent: float = 12.0
+    self.visual_indent: float = 12.5
     self.elem_params: Dict[str, Dict[
       Literal['id', 'c', 'r', 'w', 'h', 'x', 'y', 'p', 'spec'],
       str or int or float
@@ -203,6 +203,7 @@ class BpmnLayoutGenerator:
     self.change_event_lanes = True
     self.change_closing_gateways_lanes = True
     self.lanes_cache = {}
+    self.gateway_gap = 25.0
 
   def generate_di_layer(self, tags_dict_repr, sizes):
     self.repr = list(tags_dict_repr.values())[0]['children']
@@ -712,25 +713,33 @@ class BpmnLayoutGenerator:
     distances = []
     for i, _ in enumerate(self.grid[other_axis]):
 
-      shifting_projection = float('inf')
+      border_shifting_elem = {'x': float('inf'), 'y': float('inf')}
       try:
-        shifting_projection = min(
+        border_shifting_elem = min(
           self._filter_elements(i + 1, other_axis, 'exact', elements_to_shift),
-          key=lambda e: e[dim])[dim]
+          key=lambda e: e[dim])
       except ValueError:
         pass
 
-      static_projection = 0
+      border_static_elem = {'x': 0, 'y': 0}
       try:
-        static_projection = max(
+        border_static_elem = max(
           self._filter_elements(i + 1, other_axis, 'exact', rest_els),
-          key=lambda e: e[dim])[dim]
+          key=lambda e: e[dim])
       except ValueError:
         pass
+
+      shifting_projection = border_shifting_elem[dim]
+      if border_shifting_elem.get('add_gap'):
+        shifting_projection -= self.gateway_gap
+
+      static_projection = border_static_elem[dim]
+      if border_static_elem.get('add_gap'):
+        static_projection += self.gateway_gap
 
       distances.append(shifting_projection - static_projection)
 
-    shift_value = max(min(distances) - 3 * self.visual_indent, 0)
+    shift_value = max(min(distances) - 2 * self.visual_indent, 0)
 
     if not shift_value:
       return idx - 1
@@ -770,19 +779,27 @@ class BpmnLayoutGenerator:
         wp_coords[0], wp_coords[1] - shift_value)
 
   def _get_converted_waypoints(self):
-    return reduce(
-      lambda acc, item: acc + (
-        [
-          {'x': i[1][0], 'y': i[1][1], 'is_label': False, 'parent': item[0],
-           'idx': i[0], 'is_virtual': False}
-          for i in enumerate(item[1]['waypoints'])
-        ] + [
-          {'x': item[1]['label'][0], 'y': item[1]['label'][1],
-           'is_label': True, 'parent': item[0], 'idx': -1, 'is_virtual': False}
-        ]
-      ),
-      self.edges_params.items(),
-      [])
+    result = []
+    for flow_id in self.edges_params.keys():
+
+      waypoints = self.edges_params[flow_id]['waypoints']
+      for idx, wp in enumerate(waypoints):
+        wp_obj = {
+          'x': wp[0], 'y': wp[1], 'idx': idx, 'is_label': False,
+          'parent': flow_id, 'is_virtual': False, 'is_intermediate': False,
+          'add_gap': False}
+        if idx != 0 and idx != len(waypoints) - 1:
+          wp_obj['is_intermediate'] = True
+          wp_obj['add_gap'] = True
+        result.append(wp_obj)
+
+      label = self.edges_params[flow_id]['label']
+      result.append(
+        {'x': label[0], 'y': label[1], 'is_label': True, 'idx': -1,
+         'parent': flow_id, 'is_virtual': False, 'is_intermediate': True,
+         'add_gap': False})
+
+    return result
 
   def _get_virtual_waypoints(self, axis):
     axis_idx = 0 if axis == 'cols' else 1
@@ -811,7 +828,7 @@ class BpmnLayoutGenerator:
         acc += bar
         if start_coord < acc < end_coord:
           virtual_waypoints.append({
-            'is_label': False, 'parent': key, 'idx': None,
+            'is_label': False, 'parent': key, 'idx': None, 'add_gap': True,
             'is_virtual': True, axis_xy: const_component,
             other_axis_xy: (2 * acc + bar) / 2})
 
